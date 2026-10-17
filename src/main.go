@@ -1978,6 +1978,47 @@ func diskType(dev string) string {
 	return media
 }
 
+func diskMedia(dev string) string {
+	if readFileTrim("/sys/block/"+dev+"/queue/rotational") == "1" {
+		return "HDD"
+	}
+	return "SSD"
+}
+
+func parseSmartBus(out string) string {
+	low := strings.ToLower(out)
+	if strings.Contains(low, "sata version is:") || strings.Contains(low, "transport protocol: sata") {
+		return "SATA"
+	}
+	if strings.Contains(low, "transport protocol: sas") {
+		return "SAS"
+	}
+	return ""
+}
+
+// smartBus resolves the ambiguity of ID_BUS=scsi: a SATA disk attached to a
+// SAS HBA is also SCSI. smartctl -i reports the real transport protocol.
+func smartBus(dev string) string {
+	vendor := strings.TrimSpace(readFileTrim("/sys/block/" + dev + "/device/vendor"))
+	if strings.EqualFold(vendor, "ATA") {
+		return "SATA"
+	}
+	if smartctlPath() == "" {
+		return ""
+	}
+	return parseSmartBus(runSmartctl("-i", "/dev/"+dev))
+}
+
+func refineDiskType(dev, current string) string {
+	if strings.HasPrefix(dev, "nvme") || strings.HasPrefix(current, "SATA-") {
+		return current
+	}
+	if bus := smartBus(dev); bus != "" {
+		return bus + "-" + diskMedia(dev)
+	}
+	return current
+}
+
 func diskInfo(dev string) (bus, model, serial string) {
 	props, _ := run("udevadm", "info", "--query=property", "--name=/dev/"+dev)
 	for _, line := range strings.Split(props, "\n") {
@@ -3091,6 +3132,7 @@ func showDisks() {
 		_, _, serial := diskInfo(dev)
 		slot := "-"
 		health := "-"
+		controllerType := false
 		var children []diskChild
 		// For sdX behind perccli, override udevadm controller info with
 		// physical disk info. RAID mode: sysfs target == DG. Passthrough:
@@ -3103,6 +3145,7 @@ func showDisks() {
 				}
 				if found && len(disks) > 0 {
 					first := disks[0]
+					controllerType = true
 					if first.Intf != "" && first.Med != "" {
 						dt = first.Intf + "-" + first.Med
 					}
@@ -3148,6 +3191,7 @@ func showDisks() {
 		if hm, ok := diskHPMapCache(); ok {
 			if disks, found := hm[dev]; found && len(disks) > 0 {
 				first := disks[0]
+				controllerType = true
 				if first.Intf != "" && first.Med != "" {
 					dt = first.Intf + "-" + first.Med
 				}
@@ -3201,6 +3245,9 @@ func showDisks() {
 				slot = auto
 			}
 			bdf = addr
+		}
+		if !controllerType {
+			dt = refineDiskType(dev, dt)
 		}
 		if o := slotOverride(dev, serial, bdf); o != "" {
 			slot = o

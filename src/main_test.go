@@ -371,6 +371,20 @@ func TestHPBusMedia(t *testing.T) {
 	}
 }
 
+func TestParseSmartBus(t *testing.T) {
+	cases := []struct{ out, want string }{
+		{"SATA Version is:  SATA 3.1, 6.0 Gb/s", "SATA"},
+		{"Transport protocol: SAS (SPL-3)", "SAS"},
+		{"Transport protocol: SATA", "SATA"},
+		{"Vendor: VMware\nProduct: Virtual disk", ""},
+	}
+	for _, c := range cases {
+		if got := parseSmartBus(c.out); got != c.want {
+			t.Errorf("parseSmartBus(%q) = %q, want %q", c.out, got, c.want)
+		}
+	}
+}
+
 func TestSmartHealthParsing(t *testing.T) {
 	if got := parseSmartHealth("SMART overall-health self-assessment test result: PASSED"); got != "OK" {
 		t.Errorf("PASSED = %q", got)
