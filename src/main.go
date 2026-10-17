@@ -3001,17 +3001,29 @@ func diskWidths(cols int) (deviceW, slotW, healthW, serialW, lineWidth int) {
 		lineWidth = 78
 	}
 	widths := []int{10, 6, 9, 10, 6, 30} // device,size,type,slot,health,serial
-	const baseSum = 71
 	extra := lineWidth - 78
 	if extra > 0 {
-		for i := range widths {
-			widths[i] += extra * widths[i] / baseSum
+		// Keep SERIAL from dominating a wide screen; give it at most 4
+		// extra characters and spread the rest across the other columns.
+		addSerial := extra
+		if addSerial > 4 {
+			addSerial = 4
+		}
+		widths[5] += addSerial
+		extra -= addSerial
+		base := 41 // device+size+type+slot+health
+		for i := 0; i < 5; i++ {
+			widths[i] += extra * widths[i] / base
 		}
 		used := 0
 		for _, w := range widths {
 			used += w
 		}
-		widths[5] += lineWidth - (used + 7)
+		remain := lineWidth - (used + 7)
+		for i := 0; remain > 0; i = (i + 1) % 5 {
+			widths[i]++
+			remain--
+		}
 	}
 	return widths[0], widths[3], widths[4], widths[5], lineWidth
 }
@@ -3301,7 +3313,7 @@ func showDisks() {
 					padCell(r.dt, 9, wide),
 					padCell(r.slot, slotW, wide),
 					padCell(health, healthW, wide),
-					padCell(serial, serialW, wide))
+					padCell(serial, serialW, true))
 				// Standard tree for wide consoles; fall back to ASCII on a
 				// plain vt100/serial terminal where box drawing may not exist.
 				branch, lastBranch := "├─", "└─"
@@ -3345,7 +3357,7 @@ func showDisks() {
 						padCell(childType, 9, wide),
 						padCell(childSlot, slotW, wide),
 						padCell(childHealth, healthW, wide),
-						padCell(childSerial, serialW, wide))
+						padCell(childSerial, serialW, true))
 				}
 			}
 			if page+1 < totalPages {
