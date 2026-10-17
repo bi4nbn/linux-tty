@@ -2316,12 +2316,24 @@ func runSmartctl(args ...string) string {
 }
 
 func parseSmartHealth(out string) string {
-	low := strings.ToLower(out)
-	if strings.Contains(low, "failed") {
-		return "BAD"
-	}
-	if strings.Contains(low, "passed") {
-		return "OK"
+	for _, line := range strings.Split(out, "\n") {
+		t := strings.TrimSpace(line)
+		low := strings.ToLower(t)
+		if !strings.Contains(low, "overall-health self-assessment test result:") &&
+			!strings.HasPrefix(low, "smart health status:") {
+			continue
+		}
+		i := strings.Index(t, ":")
+		if i < 0 {
+			continue
+		}
+		v := strings.ToLower(afterEquals(t[i:]))
+		if strings.Contains(v, "passed") || strings.Contains(v, "ok") {
+			return "OK"
+		}
+		if strings.Contains(v, "failed") {
+			return "BAD"
+		}
 	}
 	return "-"
 }
@@ -2430,6 +2442,9 @@ func smartHealth(dev string) string {
 		return "-"
 	}
 	target := dev
+	if !strings.HasPrefix(dev, "/dev/") {
+		target = "/dev/" + dev
+	}
 	out := runSmartctl("-H", target)
 	return parseSmartHealth(out)
 }

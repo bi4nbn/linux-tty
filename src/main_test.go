@@ -378,6 +378,12 @@ func TestSmartHealthParsing(t *testing.T) {
 	if got := parseSmartHealth("SMART overall-health self-assessment test result: FAILED!"); got != "BAD" {
 		t.Errorf("FAILED = %q", got)
 	}
+	if got := parseSmartHealth("SMART Health Status: OK"); got != "OK" {
+		t.Errorf("SMART Health Status OK = %q", got)
+	}
+	if got := parseSmartHealth("A mandatory SMART command failed: exiting."); got != "-" {
+		t.Errorf("unsupported SMART command = %q, want -", got)
+	}
 	okAttr := `Critical Warning:                   0x00
 Available Spare:                    100%
 Available Spare Threshold:          10%
