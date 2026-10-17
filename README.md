@@ -24,7 +24,7 @@
 
 修改网络配置前会备份到 `/var/backups/netcfg`；如果新配置应用失败，会自动恢复并重新应用旧配置。RHEL 的 ifcfg 重写会保留 `UUID`、`HWADDR`、`MTU`、`ETHTOOL_OPTS` 等非网络地址字段。
 
-菜单 3 同时支持 LSI MegaRAID / Dell PERC（`perccli`/`storcli`）和 **HP Smart Array**（`ssacli`/`hpssacli`/`hpacucli`）。SLOT 列会带上 RAID 模式：单盘逻辑卷显示 `RAID0:12`，多盘阵列父行显示 `RAID5`、子行显示槽位号。Dell PERC 的槽位来自 `EID:Slot`，显示时只取 Slot；HP 逻辑卷通过 `ssacli ctrl all show config detail` 映射回物理盘位。磁盘页按终端高度自动分页填满屏幕：BIOS 25 行时每页 18 行数据，UEFI 48 行时每页 41 行；按 Enter 翻页、输入 `q` 退出。列宽固定 80 列六列表格（DEVICE/SIZE/TYPE/SLOT/HEALTH/SERIAL），超长字段用 `...` 截断。HEALTH 由阵列卡工具计算：PERC 读取 `State`、介质/其他错误、预测故障和 SMART，HP 读取物理盘与逻辑盘 `Status`；NVMe 在安装 `smartctl` 时显示**剩余寿命百分比**（100% - `Percentage Used`），失败显示 `BAD`；直通盘用 `smartctl -H` 显示 `OK`/`BAD`。正常 `OK`、预警 `WARN`、故障 `BAD`，无健康数据源的盘显示 `-`。逻辑卷对应多块物理盘时，父行显示 RAID 模式，下面用树形列出每个物理盘位和序列号。NVMe 盘优先通过 SMBIOS 显示 PCIe 插槽名（如 `Slot 2`），没有映射时回退到 PCI 地址。
+菜单 3 同时支持 LSI MegaRAID / Dell PERC（`perccli`/`storcli`）和 **HP Smart Array**（`ssacli`/`hpssacli`/`hpacucli`）。SLOT 列会带上 RAID 模式：单盘逻辑卷显示 `RAID0:12`，多盘阵列父行显示 `RAID5`、子行显示槽位号。Dell PERC 的槽位来自 `EID:Slot`，显示时只取 Slot；HP 逻辑卷通过 `ssacli ctrl all show config detail` 映射回物理盘位。磁盘页按终端高度自动分页填满屏幕：BIOS 25 行时每页 18 行数据，UEFI 48 行时每页 41 行；按 Enter 翻页、输入 `q` 退出。表格按终端实际列数自适应：80 列时保持最小六列布局（DEVICE/SIZE/TYPE/SLOT/HEALTH/SERIAL），更宽的 UEFI 控制台会把六列按比例铺满整行，表头和宽屏内容居中；超长字段用 `...` 截断。HEALTH 由阵列卡工具计算：PERC 读取 `State`、介质/其他错误、预测故障和 SMART，HP 读取物理盘与逻辑盘 `Status`；NVMe 在安装 `smartctl` 时显示**剩余寿命百分比**（100% - `Percentage Used`），失败显示 `BAD`；直通盘用 `smartctl -H` 显示 `OK`/`BAD`。正常 `OK`、预警 `WARN`、故障 `BAD`，无健康数据源的盘显示 `-`。逻辑卷对应多块物理盘时，父行显示 RAID 模式，下面用树形列出每个物理盘位和序列号。NVMe 盘优先通过 SMBIOS 显示 PCIe 插槽名（如 `Slot 2`），没有映射时回退到 PCI 地址。
 
 ### 手动槽位映射
 

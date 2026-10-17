@@ -2938,6 +2938,17 @@ func centerStr(s string, n int) string {
 	return strings.Repeat(" ", left) + s + strings.Repeat(" ", right)
 }
 
+func padCell(s string, w int, center bool) string {
+	s = truncateStr(s, w)
+	if center {
+		return centerStr(s, w)
+	}
+	if len(s) >= w {
+		return s
+	}
+	return s + strings.Repeat(" ", w-len(s))
+}
+
 func truncateStr(s string, n int) string {
 	if n <= 0 {
 		return ""
@@ -2979,6 +2990,30 @@ func getTTYSize() (rows, cols int) {
 		cols = 80
 	}
 	return
+}
+
+// diskWidths distributes the available terminal width across the six
+// columns. At 80 columns it keeps the original minimum widths; wider
+// consoles get the extra space proportionally so the table fills the screen.
+func diskWidths(cols int) (deviceW, slotW, healthW, serialW, lineWidth int) {
+	lineWidth = cols - 2
+	if lineWidth < 78 {
+		lineWidth = 78
+	}
+	widths := []int{10, 6, 9, 10, 6, 30} // device,size,type,slot,health,serial
+	const baseSum = 71
+	extra := lineWidth - 78
+	if extra > 0 {
+		for i := range widths {
+			widths[i] += extra * widths[i] / baseSum
+		}
+		used := 0
+		for _, w := range widths {
+			used += w
+		}
+		widths[5] += lineWidth - (used + 7)
+	}
+	return widths[0], widths[3], widths[4], widths[5], lineWidth
 }
 
 func showDisks() {
@@ -3195,21 +3230,12 @@ func showDisks() {
 
 	// Fill the terminal vertically. Header takes 4 lines, footer/pause takes
 	// 3 lines; the remaining rows are available for disk data.
-	termRows, _ := getTTYSize()
+	termRows, termCols := getTTYSize()
+	deviceW, slotW, healthW, serialW, lineWidth := diskWidths(termCols)
 	pageLines := termRows - 7
 	if pageLines < 5 {
 		pageLines = 5
 	}
-	// One fixed layout for every console (BIOS, UEFI, 80 or 128 columns).
-	// Keep it within 80 columns; long fields are truncated.
-	const (
-		deviceW   = 10
-		slotW     = 10
-		healthW   = 6
-		serialW   = 30
-		lineWidth = 7 + deviceW + 6 + 9 + slotW + healthW + serialW
-	)
-
 	// Paginate by rendered lines so the page fills the terminal height.
 	// A RAID tree contributes one line per physical drive.
 	var pages [][]diskRow
@@ -3268,13 +3294,14 @@ func showDisks() {
 				if health == "" {
 					health = "-"
 				}
-				fmt.Printf("  %-*s %-6s %-9s %-*s %-*s %s\n",
-					deviceW, truncateStr(r.display, deviceW),
-					r.size,
-					truncateStr(r.dt, 9),
-					slotW, truncateStr(r.slot, slotW),
-					healthW, health,
-					truncateStr(serial, serialW))
+				wide := lineWidth > 78
+				fmt.Printf("  %s %s %s %s %s %s\n",
+					padCell(r.display, deviceW, wide),
+					padCell(r.size, 6, wide),
+					padCell(r.dt, 9, wide),
+					padCell(r.slot, slotW, wide),
+					padCell(health, healthW, wide),
+					padCell(serial, serialW, wide))
 				// Standard tree for wide consoles; fall back to ASCII on a
 				// plain vt100/serial terminal where box drawing may not exist.
 				branch, lastBranch := "├─", "└─"
@@ -3311,13 +3338,14 @@ func showDisks() {
 					// in SLOT so every column, especially SERIAL, aligns
 					// with the table header.
 					label := truncateStr(prefix, deviceW)
-					fmt.Printf("  %-*s %-6s %-9s %-*s %-*s %s\n",
-						deviceW, label,
-						childSize,
-						truncateStr(childType, 9),
-						slotW, truncateStr(childSlot, slotW),
-						healthW, childHealth,
-						truncateStr(childSerial, serialW))
+					wide := lineWidth > 78
+					fmt.Printf("  %s %s %s %s %s %s\n",
+						padCell(label, deviceW, false),
+						padCell(childSize, 6, wide),
+						padCell(childType, 9, wide),
+						padCell(childSlot, slotW, wide),
+						padCell(childHealth, healthW, wide),
+						padCell(childSerial, serialW, wide))
 				}
 			}
 			if page+1 < totalPages {
