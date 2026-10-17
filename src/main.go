@@ -2002,7 +2002,7 @@ func serialWithBrand(model, serial string) string {
 		return serial
 	}
 	if b := brandOf(model); b != "" {
-		return b + " " + serial
+		return b + "-" + serial
 	}
 	return serial
 }

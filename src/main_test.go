@@ -492,7 +492,7 @@ func TestBrandOf(t *testing.T) {
 			t.Errorf("brandOf(%q) = %q, want %q", c.model, got, c.want)
 		}
 	}
-	if got := serialWithBrand("INTEL SSDSC2KB480G7", "PHYS811301V0480BGN"); got != "INTEL PHYS811301V0480BGN" {
+	if got := serialWithBrand("INTEL SSDSC2KB480G7", "PHYS811301V0480BGN"); got != "INTEL-PHYS811301V0480BGN" {
 		t.Errorf("serialWithBrand = %q", got)
 	}
 	if got := serialWithBrand("Virtual disk", "ABC123"); got != "ABC123" {
