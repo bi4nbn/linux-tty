@@ -2914,6 +2914,15 @@ func compactSize(num, unit string) string {
 	return fmt.Sprintf("%.1f%s", f, strings.ToLower(unit))
 }
 
+func centerStr(s string, n int) string {
+	if len(s) >= n {
+		return s[:n]
+	}
+	left := (n - len(s)) / 2
+	right := n - len(s) - left
+	return strings.Repeat(" ", left) + s + strings.Repeat(" ", right)
+}
+
 func truncateStr(s string, n int) string {
 	if n <= 0 {
 		return ""
@@ -3219,9 +3228,10 @@ func showDisks() {
 		right := pad - left
 		fmt.Printf("%s %s %s\n", strings.Repeat("=", left), title, strings.Repeat("=", right))
 		fmt.Println()
-		fmt.Printf("  %-*s %-6s %-9s %-*s %-*s %*s\n",
-			deviceW, "DEVICE", "SIZE", "TYPE", slotW, "SLOT",
-			healthW, "HEALTH", serialW, "SERIAL")
+		fmt.Printf("  %s %s %s %s %s %s\n",
+			centerStr("DEVICE", deviceW), centerStr("SIZE", 6),
+			centerStr("TYPE", 9), centerStr("SLOT", slotW),
+			centerStr("HEALTH", healthW), centerStr("SERIAL", serialW))
 		fmt.Println("  " + strings.Repeat("-", lineWidth-2))
 	}
 
@@ -3243,13 +3253,13 @@ func showDisks() {
 				if health == "" {
 					health = "-"
 				}
-				fmt.Printf("  %-*s %-6s %-9s %-*s %-*s %*s\n",
+				fmt.Printf("  %-*s %-6s %-9s %-*s %-*s %s\n",
 					deviceW, truncateStr(r.display, deviceW),
 					r.size,
 					truncateStr(r.dt, 9),
 					slotW, truncateStr(r.slot, slotW),
 					healthW, health,
-					serialW, truncateStr(serial, serialW))
+					truncateStr(serial, serialW))
 				// Standard tree for wide consoles; fall back to ASCII on a
 				// plain vt100/serial terminal where box drawing may not exist.
 				branch, lastBranch := "├─", "└─"
@@ -3286,13 +3296,13 @@ func showDisks() {
 					// in SLOT so every column, especially SERIAL, aligns
 					// with the table header.
 					label := truncateStr(prefix, deviceW)
-					fmt.Printf("  %-*s %-6s %-9s %-*s %-*s %*s\n",
+					fmt.Printf("  %-*s %-6s %-9s %-*s %-*s %s\n",
 						deviceW, label,
 						childSize,
 						truncateStr(childType, 9),
 						slotW, truncateStr(childSlot, slotW),
 						healthW, childHealth,
-						serialW, truncateStr(childSerial, serialW))
+						truncateStr(childSerial, serialW))
 				}
 			}
 			if page+1 < totalPages {
