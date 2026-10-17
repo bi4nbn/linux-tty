@@ -1999,7 +1999,7 @@ func brandOf(model string) string {
 		"SAMSUNG", "INTEL", "HGST", "HITACHI", "SEAGATE", "TOSHIBA",
 		"WESTERN DIGITAL", "WDC", "MICRON", "CRUCIAL", "KIOXIA",
 		"SK HYNIX", "SANDISK", "KINGSTON", "HPE", "DELL", "LENOVO",
-		"HUAWEI", "MEMBLAZE", "PBLAZE",
+		"HUAWEI", "MEMBLAZE", "PBLAZE", "HIKVISION",
 	} {
 		if strings.HasPrefix(m, b) {
 			if b == "HITACHI" {
@@ -2020,6 +2020,8 @@ func brandOf(model string) string {
 		return "INTEL"
 	case strings.HasPrefix(m, "ST") && len(m) > 2 && m[2] >= '0' && m[2] <= '9':
 		return "SEAGATE"
+	case strings.HasPrefix(m, "HS-SSD"):
+		return "HIKVISION"
 	case strings.HasPrefix(m, "WUS"):
 		return "WD"
 	case strings.HasPrefix(m, "WD"):

@@ -485,6 +485,7 @@ func TestBrandOf(t *testing.T) {
 		{"HUH728080ALN600", "HGST"},
 		{"SAMSUNG MZ7LH240HAHQ", "SAMSUNG"},
 		{"ST6000NM0115-1YZ110", "SEAGATE"},
+		{"HS-SSD-C2000Pro 2048G", "HIKVISION"},
 		{"Virtual disk", ""},
 	}
 	for _, c := range cases {
