@@ -3219,9 +3219,9 @@ func showDisks() {
 		right := pad - left
 		fmt.Printf("%s %s %s\n", strings.Repeat("=", left), title, strings.Repeat("=", right))
 		fmt.Println()
-		fmt.Printf("  %-*s %-6s %-9s %-*s %-*s %s\n",
+		fmt.Printf("  %-*s %-6s %-9s %-*s %-*s %*s\n",
 			deviceW, "DEVICE", "SIZE", "TYPE", slotW, "SLOT",
-			healthW, "HEALTH", "SERIAL")
+			healthW, "HEALTH", serialW, "SERIAL")
 		fmt.Println("  " + strings.Repeat("-", lineWidth-2))
 	}
 
@@ -3243,13 +3243,13 @@ func showDisks() {
 				if health == "" {
 					health = "-"
 				}
-				fmt.Printf("  %-*s %-6s %-9s %-*s %-*s %s\n",
+				fmt.Printf("  %-*s %-6s %-9s %-*s %-*s %*s\n",
 					deviceW, truncateStr(r.display, deviceW),
 					r.size,
 					truncateStr(r.dt, 9),
 					slotW, truncateStr(r.slot, slotW),
 					healthW, health,
-					truncateStr(serial, serialW))
+					serialW, truncateStr(serial, serialW))
 				// Standard tree for wide consoles; fall back to ASCII on a
 				// plain vt100/serial terminal where box drawing may not exist.
 				branch, lastBranch := "├─", "└─"
@@ -3286,13 +3286,13 @@ func showDisks() {
 					// in SLOT so every column, especially SERIAL, aligns
 					// with the table header.
 					label := truncateStr(prefix, deviceW)
-					fmt.Printf("  %-*s %-6s %-9s %-*s %-*s %s\n",
+					fmt.Printf("  %-*s %-6s %-9s %-*s %-*s %*s\n",
 						deviceW, label,
 						childSize,
 						truncateStr(childType, 9),
 						slotW, truncateStr(childSlot, slotW),
 						healthW, childHealth,
-						truncateStr(childSerial, serialW))
+						serialW, truncateStr(childSerial, serialW))
 				}
 			}
 			if page+1 < totalPages {
