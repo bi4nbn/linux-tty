@@ -2138,47 +2138,85 @@ func diskPercMapCache() (map[int][]percDiskInfo, bool) {
 	return percCache, percCache != nil
 }
 
-func percToolPath() string {
-	for _, name := range []string{"perccli64", "storcli64", "MegaCli64", "storcli", "MegaCli"} {
+func percToolPaths() []string {
+	var res []string
+	seen := map[string]bool{}
+	add := func(p string) {
+		if p == "" || seen[p] {
+			return
+		}
+		seen[p] = true
+		res = append(res, p)
+	}
+	// storcli first: on Huawei/LSI cards perccli may be a vendor wrapper.
+	for _, name := range []string{"storcli64", "perccli64", "storcli", "MegaCli64", "MegaCli"} {
 		if p, err := exec.LookPath(name); err == nil {
-			return p
+			add(p)
 		}
 	}
 	for _, p := range []string{
-		"/opt/MegaRAID/perccli/perccli64",
 		"/opt/MegaRAID/storcli/storcli64",
-		"/usr/local/bin/perccli64",
+		"/opt/MegaRAID/perccli/perccli64",
 		"/usr/local/bin/storcli64",
-		"/usr/sbin/perccli64",
+		"/usr/local/bin/perccli64",
 		"/usr/sbin/storcli64",
+		"/usr/sbin/perccli64",
 	} {
 		if _, err := os.Stat(p); err == nil {
-			return p
+			add(p)
 		}
 	}
-	return ""
+	return res
 }
 
 func diskPercMap() (map[int][]percDiskInfo, error) {
-	tool := percToolPath()
-	if tool == "" {
+	tools := percToolPaths()
+	if len(tools) == 0 {
 		return nil, fmt.Errorf("no perccli/storcli found")
 	}
-	out, err := run(tool, "/c0/eall/sall", "show", "all")
-	if err != nil {
-		return nil, err
+	var lastErr error
+	for _, tool := range tools {
+		out, err := run(tool, "/c0/eall/sall", "show", "all")
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		res := parsePercDiskOutput(out)
+		if len(res) == 0 {
+			lastErr = fmt.Errorf("%s returned no physical drives", tool)
+			continue
+		}
+		// VD list carries the RAID level (Dell H330: 0/0 RAID0 ...).
+		if vdOut, verr := run(tool, "/c0/vall", "show"); verr == nil {
+			raid := parsePercRaidLevels(vdOut)
+			for _, disks := range res {
+				for i := range disks {
+					disks[i].Raid = raid[disks[i].DG]
+				}
+			}
+		}
+		return res, nil
 	}
-	res := parsePercDiskOutput(out)
-	// VD list carries the RAID level (Dell H330: 0/0 RAID0 ...).
-	if vdOut, verr := run(tool, "/c0/vall", "show"); verr == nil {
-		raid := parsePercRaidLevels(vdOut)
-		for _, disks := range res {
-			for i := range disks {
-				disks[i].Raid = raid[disks[i].DG]
+	return nil, lastErr
+}
+
+func percBySerial(serial string) ([]percDiskInfo, bool) {
+	serial = strings.TrimSpace(serial)
+	if serial == "" {
+		return nil, false
+	}
+	pm, ok := diskPercMapCache()
+	if !ok {
+		return nil, false
+	}
+	for _, disks := range pm {
+		for _, d := range disks {
+			if strings.TrimSpace(d.Serial) == serial {
+				return []percDiskInfo{d}, true
 			}
 		}
 	}
-	return res, nil
+	return nil, false
 }
 
 func parsePercRaidLevels(out string) map[int]string {
@@ -2226,7 +2264,7 @@ func parsePercDiskOutput(out string) map[int][]percDiskInfo {
 		}
 	}
 	// Table row: "32:0      0 Onln   1 5.457 TB SATA HDD N   N  512B ST6000NM0115-1YZ110"
-	tblRe := regexp.MustCompile(`^(\d+):(\d+)\s+(\d+)\s+(\w+)\s+(-?\d+)\s+([\d.]+)\s+(\w+)\s+(\w+)\s+(\w+)`)
+	tblRe := regexp.MustCompile(`^(\d+):(\d+)\s+(\d+)\s+(\w+)\s+(-?\d+|-)\s+([\d.]+)\s+(\w+)\s+(\w+)\s+(\w+)`)
 	snRe := regexp.MustCompile(`^SN\s*=\s*(\S+)`)
 	modelRe := regexp.MustCompile(`^Model Number\s*=\s*(.+)`)
 	driveRe := regexp.MustCompile(`^Drive /c\d+/e\d+/s\d+\s*:$`)
@@ -2245,7 +2283,11 @@ func parsePercDiskOutput(out string) map[int][]percDiskInfo {
 			curSlot, _ = strconv.Atoi(m[2])
 			curDID, _ = strconv.Atoi(m[3])
 			curState = strings.TrimSpace(m[4])
-			curDG, _ = strconv.Atoi(m[5])
+			if strings.TrimSpace(m[5]) == "-" {
+				curDG = -1
+			} else {
+				curDG, _ = strconv.Atoi(m[5])
+			}
 			curSize = compactSize(m[6], m[7])
 			curIntf = strings.ToUpper(m[8])
 			curMed = strings.ToUpper(m[9])
@@ -3142,6 +3184,9 @@ func showDisks() {
 				disks, found := pm[t]
 				if !found {
 					disks, found = pm[-t-1]
+				}
+				if !found {
+					disks, found = percBySerial(serial)
 				}
 				if found && len(disks) > 0 {
 					first := disks[0]

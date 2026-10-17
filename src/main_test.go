@@ -260,6 +260,47 @@ S438NA0N910155 Slot 6-1
 	}
 }
 
+func TestParsePercUnconfigured(t *testing.T) {
+	out := `Drive /c0/e8/s0 :
+===============
+
+----------------------------------------------------------------------------
+EID:Slt DID State DG       Size Intf Med SED PI SeSz Model               Sp 
+----------------------------------------------------------------------------
+8:0       0 UGood -  446.102 GB SATA SSD -   N  512B INTEL SSDSC2KB480G7 -  
+----------------------------------------------------------------------------
+SN = PHYS811301V0480BGN
+Model Number = INTEL SSDSC2KB480G7
+
+Drive /c0/e8/s1 :
+===============
+
+---------------------------------------------------------------------------
+EID:Slt DID State DG     Size Intf Med SED PI SeSz Model                Sp 
+---------------------------------------------------------------------------
+8:1       1 UGood -  7.276 TB SATA HDD -   N  512B HGST HUH728080ALE604 -  
+---------------------------------------------------------------------------
+SN = VKK4PH8Y
+Model Number = HGST HUH728080ALE604
+`
+	m := parsePercDiskOutput(out)
+	d0, ok := m[-1]
+	if !ok || len(d0) != 1 {
+		t.Fatalf("unconfigured s0 = %+v", d0)
+	}
+	if d0[0].EID != 8 || d0[0].Slot != 0 || d0[0].DG != -1 ||
+		d0[0].State != "UGood" || d0[0].Intf != "SATA" || d0[0].Med != "SSD" ||
+		d0[0].Serial != "PHYS811301V0480BGN" {
+		t.Errorf("unconfigured s0 fields = %+v", d0[0])
+	}
+	if got := percHealth(d0[0]); got != "OK" {
+		t.Errorf("unconfigured health = %q, want OK", got)
+	}
+	if got := percSlotLabel(d0[0]); got != "00" {
+		t.Errorf("unconfigured slot label = %q, want 00", got)
+	}
+}
+
 func TestParsePercRaidLevels(t *testing.T) {
 	out := `
 ---------------------------------------------------------------
