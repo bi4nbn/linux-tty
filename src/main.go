@@ -1959,6 +1959,36 @@ func systemDisks() []string {
 	return res
 }
 
+func brandFromVendorID(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "0x1c5f":
+		return "MEMBLAZE"
+	case "0x1b96", "0x1c58", "0x15b7":
+		return "WD"
+	case "0x144d":
+		return "SAMSUNG"
+	case "0x8086":
+		return "INTEL"
+	case "0x1e0f", "0x1179":
+		return "KIOXIA"
+	case "0x1344":
+		return "MICRON"
+	}
+	return ""
+}
+
+func nvmeVendorBrand(dev string) string {
+	if !strings.HasPrefix(dev, "nvme") {
+		return ""
+	}
+	m := nvmeCtrlRe.FindStringSubmatch(dev)
+	if m == nil {
+		return ""
+	}
+	v := readFileTrim("/sys/class/nvme/" + m[1] + "/device/vendor")
+	return brandFromVendorID(v)
+}
+
 func brandOf(model string) string {
 	m := strings.ToUpper(strings.TrimSpace(model))
 	for _, prefix := range []string{"ATA ", "SCSI ", "NVME "} {
@@ -1969,7 +1999,7 @@ func brandOf(model string) string {
 		"SAMSUNG", "INTEL", "HGST", "HITACHI", "SEAGATE", "TOSHIBA",
 		"WESTERN DIGITAL", "WDC", "MICRON", "CRUCIAL", "KIOXIA",
 		"SK HYNIX", "SANDISK", "KINGSTON", "HPE", "DELL", "LENOVO",
-		"HUAWEI",
+		"HUAWEI", "MEMBLAZE", "PBLAZE",
 	} {
 		if strings.HasPrefix(m, b) {
 			if b == "HITACHI" {
@@ -1990,18 +2020,24 @@ func brandOf(model string) string {
 		return "INTEL"
 	case strings.HasPrefix(m, "ST") && len(m) > 2 && m[2] >= '0' && m[2] <= '9':
 		return "SEAGATE"
+	case strings.HasPrefix(m, "WUS"):
+		return "WD"
 	case strings.HasPrefix(m, "WD"):
 		return "WD"
 	}
 	return ""
 }
 
-func serialWithBrand(model, serial string) string {
+func serialWithBrand(dev, model, serial string) string {
 	serial = strings.TrimSpace(serial)
 	if serial == "" || serial == "-" {
 		return serial
 	}
-	if b := brandOf(model); b != "" {
+	b := brandOf(model)
+	if b == "" {
+		b = nvmeVendorBrand(dev)
+	}
+	if b != "" {
 		return b + "-" + serial
 	}
 	return serial
@@ -3250,7 +3286,7 @@ func showDisks() {
 							slot = first.Raid + ":" + slot
 						}
 						if first.Serial != "" {
-							serial = serialWithBrand(first.Model, first.Serial)
+							serial = serialWithBrand(dev, first.Model, first.Serial)
 						}
 					} else {
 						slot = first.Raid
@@ -3271,7 +3307,7 @@ func showDisks() {
 								size:   d.Size,
 								dt:     cdt,
 								health: ch,
-								serial: serialWithBrand(d.Model, d.Serial),
+								serial: serialWithBrand(dev, d.Model, d.Serial),
 							})
 						}
 						health = worstHealth(childHealth...)
@@ -3299,7 +3335,7 @@ func showDisks() {
 						slot = first.Raid + ":" + slot
 					}
 					if first.Serial != "" {
-						serial = serialWithBrand(first.Model, first.Serial)
+						serial = serialWithBrand(dev, first.Model, first.Serial)
 					}
 				} else {
 					slot = first.Raid
@@ -3324,7 +3360,7 @@ func showDisks() {
 							size:   d.Size,
 							dt:     cdt,
 							health: ch,
-							serial: serialWithBrand(d.Model, d.Serial),
+							serial: serialWithBrand(dev, d.Model, d.Serial),
 						})
 					}
 					health = worstHealth(childHealth...)
@@ -3341,7 +3377,7 @@ func showDisks() {
 		}
 		if !controllerType {
 			dt = refineDiskType(dev, dt)
-			serial = serialWithBrand(model, serial)
+			serial = serialWithBrand(dev, model, serial)
 		}
 		if o := slotOverride(dev, serial, bdf); o != "" {
 			slot = o

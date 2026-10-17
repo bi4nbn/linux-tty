@@ -492,10 +492,19 @@ func TestBrandOf(t *testing.T) {
 			t.Errorf("brandOf(%q) = %q, want %q", c.model, got, c.want)
 		}
 	}
-	if got := serialWithBrand("INTEL SSDSC2KB480G7", "PHYS811301V0480BGN"); got != "INTEL-PHYS811301V0480BGN" {
+	if got := brandOf("WUS4BB038D7P3E1"); got != "WD" {
+		t.Errorf("brandOf WUS = %q, want WD", got)
+	}
+	if got := brandFromVendorID("0x1c5f"); got != "MEMBLAZE" {
+		t.Errorf("vendor 0x1c5f = %q, want MEMBLAZE", got)
+	}
+	if got := brandFromVendorID("0x1b96"); got != "WD" {
+		t.Errorf("vendor 0x1b96 = %q, want WD", got)
+	}
+	if got := serialWithBrand("sda", "INTEL SSDSC2KB480G7", "PHYS811301V0480BGN"); got != "INTEL-PHYS811301V0480BGN" {
 		t.Errorf("serialWithBrand = %q", got)
 	}
-	if got := serialWithBrand("Virtual disk", "ABC123"); got != "ABC123" {
+	if got := serialWithBrand("sda", "Virtual disk", "ABC123"); got != "ABC123" {
 		t.Errorf("serialWithBrand no brand = %q", got)
 	}
 }
