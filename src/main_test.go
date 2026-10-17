@@ -477,6 +477,29 @@ func TestNVMeLife(t *testing.T) {
 	}
 }
 
+func TestBrandOf(t *testing.T) {
+	cases := []struct{ model, want string }{
+		{"INTEL SSDSC2KB480G7", "INTEL"},
+		{"ATA INTEL SSDSC2BB80", "INTEL"},
+		{"HGST HUH728080ALE604", "HGST"},
+		{"HUH728080ALN600", "HGST"},
+		{"SAMSUNG MZ7LH240HAHQ", "SAMSUNG"},
+		{"ST6000NM0115-1YZ110", "SEAGATE"},
+		{"Virtual disk", ""},
+	}
+	for _, c := range cases {
+		if got := brandOf(c.model); got != c.want {
+			t.Errorf("brandOf(%q) = %q, want %q", c.model, got, c.want)
+		}
+	}
+	if got := serialWithBrand("INTEL SSDSC2KB480G7", "PHYS811301V0480BGN"); got != "INTEL PHYS811301V0480BGN" {
+		t.Errorf("serialWithBrand = %q", got)
+	}
+	if got := serialWithBrand("Virtual disk", "ABC123"); got != "ABC123" {
+		t.Errorf("serialWithBrand no brand = %q", got)
+	}
+}
+
 func TestHealthHelpers(t *testing.T) {
 	cases := []struct {
 		pd   percDiskInfo
