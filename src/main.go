@@ -2178,18 +2178,45 @@ func allDisks() []string {
 }
 
 // diskSizeHuman reads /sys/block/<dev>/size (512-byte sectors) and formats.
+func formatTB(tb float64) string {
+	if tb >= 10 {
+		return fmt.Sprintf("%.0fT", tb)
+	}
+	if tb >= 1 {
+		return fmt.Sprintf("%.1fT", tb)
+	}
+	return fmt.Sprintf("%.2fT", tb)
+}
+
 func diskSizeHuman(dev string) string {
 	sectorsStr := readFileTrim("/sys/block/" + dev + "/size")
 	sectors, err := strconv.ParseInt(sectorsStr, 10, 64)
 	if err != nil || sectors == 0 {
 		return "-"
 	}
-	bytes := sectors * 512
-	gb := float64(bytes) / (1 << 30)
-	if gb >= 100 {
-		return fmt.Sprintf("%.0fG", gb)
+	return formatTB(float64(sectors*512) / 1e12)
+}
+
+func sizeToT(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "-" {
+		return "-"
 	}
-	return fmt.Sprintf("%.1fG", gb)
+	unit := s[len(s)-1]
+	num := strings.TrimSpace(s[:len(s)-1])
+	v, err := strconv.ParseFloat(num, 64)
+	if err != nil {
+		return s
+	}
+	switch unit {
+	case 'T', 't':
+		return formatTB(v)
+	case 'G', 'g':
+		return formatTB(v / 1000)
+	case 'M', 'm':
+		return formatTB(v / 1e6)
+	}
+	return s
 }
 
 // percDiskInfo holds physical disk info from perccli64.
@@ -3497,7 +3524,7 @@ func showDisks() {
 					if childSlot == "" {
 						childSlot = "-"
 					}
-					childSize := ch.size
+					childSize := sizeToT(ch.size)
 					if childSize == "" {
 						childSize = "-"
 					}

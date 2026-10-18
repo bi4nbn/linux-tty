@@ -477,6 +477,29 @@ func TestNVMeLife(t *testing.T) {
 	}
 }
 
+func TestFormatTB(t *testing.T) {
+	cases := []struct {
+		val  float64
+		want string
+	}{
+		{8.001, "8.0T"},
+		{3.725, "3.7T"},
+		{0.447, "0.45T"},
+		{0.8, "0.80T"},
+	}
+	for _, c := range cases {
+		if got := formatTB(c.val); got != c.want {
+			t.Errorf("formatTB(%v) = %q, want %q", c.val, got, c.want)
+		}
+	}
+	if got := sizeToT("800G"); got != "0.80T" {
+		t.Errorf("sizeToT(800G) = %q", got)
+	}
+	if got := sizeToT("3.6T"); got != "3.6T" {
+		t.Errorf("sizeToT(3.6T) = %q", got)
+	}
+}
+
 func TestBrandOf(t *testing.T) {
 	cases := []struct{ model, want string }{
 		{"INTEL SSDSC2KB480G7", "INTEL"},
