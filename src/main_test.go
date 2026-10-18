@@ -477,26 +477,29 @@ func TestNVMeLife(t *testing.T) {
 	}
 }
 
-func TestFormatTB(t *testing.T) {
+func TestFormatBytes(t *testing.T) {
 	cases := []struct {
-		val  float64
-		want string
+		bytes int64
+		want  string
 	}{
-		{8.001, "8.0T"},
-		{3.725, "3.7T"},
-		{0.447, "0.45T"},
-		{0.8, "0.80T"},
+		{8_001_563_222_016, "8.0T"},
+		{4_000_787_030_016, "4.0T"},
+		{447_000_000_000, "447G"},
+		{800_000_000_000, "800G"},
 	}
 	for _, c := range cases {
-		if got := formatTB(c.val); got != c.want {
-			t.Errorf("formatTB(%v) = %q, want %q", c.val, got, c.want)
+		if got := formatBytes(c.bytes); got != c.want {
+			t.Errorf("formatBytes(%d) = %q, want %q", c.bytes, got, c.want)
 		}
 	}
-	if got := sizeToT("800G"); got != "0.80T" {
-		t.Errorf("sizeToT(800G) = %q", got)
+	if got := sizeToDisplay("800G"); got != "800G" {
+		t.Errorf("sizeToDisplay(800G) = %q", got)
 	}
-	if got := sizeToT("3.6T"); got != "3.6T" {
-		t.Errorf("sizeToT(3.6T) = %q", got)
+	if got := sizeToDisplay("3.6T"); got != "3.6T" {
+		t.Errorf("sizeToDisplay(3.6T) = %q", got)
+	}
+	if got := formatBytes(percBytes("7.276", "TB")); got != "8.0T" {
+		t.Errorf("7.276 TiB = %q, want 8.0T", got)
 	}
 }
 
@@ -566,6 +569,7 @@ func TestParsePercDiskOutputDell(t *testing.T) {
 32:0      0 Onln   1 5.457 TB SATA HDD N   N  512B ST6000NM0115-1YZ110 U  -    
 SN =             ZAD25CH0
 Model Number = ST6000NM0115-1YZ110
+Raw size = 7.276 TB [0x3a3706000 Sectors]
 Media Error Count = 2
 Other Error Count = 0
 Predictive Failure Count = 1

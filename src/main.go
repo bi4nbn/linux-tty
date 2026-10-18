@@ -2182,10 +2182,26 @@ func formatTB(tb float64) string {
 	if tb >= 10 {
 		return fmt.Sprintf("%.0fT", tb)
 	}
-	if tb >= 1 {
-		return fmt.Sprintf("%.1fT", tb)
+	return fmt.Sprintf("%.1fT", tb)
+}
+
+func formatGB(gb float64) string {
+	if gb >= 100 {
+		return fmt.Sprintf("%.0fG", gb)
 	}
-	return fmt.Sprintf("%.2fT", tb)
+	return fmt.Sprintf("%.1fG", gb)
+}
+
+// formatBytes uses T for >= 1 TB and G below that.
+func formatBytes(bytes int64) string {
+	if bytes <= 0 {
+		return "-"
+	}
+	tb := float64(bytes) / 1e12
+	if tb >= 1 {
+		return formatTB(tb)
+	}
+	return formatGB(float64(bytes) / 1e9)
 }
 
 func diskSizeHuman(dev string) string {
@@ -2194,10 +2210,12 @@ func diskSizeHuman(dev string) string {
 	if err != nil || sectors == 0 {
 		return "-"
 	}
-	return formatTB(float64(sectors*512) / 1e12)
+	return formatBytes(sectors * 512)
 }
 
-func sizeToT(s string) string {
+// sizeToDisplay is for controller-provided human sizes (HP ssacli and
+// fallback PERC text). It normalizes <1 TB to G, >=1 TB to T.
+func sizeToDisplay(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" || s == "-" {
 		return "-"
@@ -2212,11 +2230,32 @@ func sizeToT(s string) string {
 	case 'T', 't':
 		return formatTB(v)
 	case 'G', 'g':
-		return formatTB(v / 1000)
+		if v >= 1000 {
+			return formatTB(v / 1000)
+		}
+		return formatGB(v)
 	case 'M', 'm':
-		return formatTB(v / 1e6)
+		return formatGB(v / 1000)
 	}
 	return s
+}
+
+// percBytes interprets PERC's "TB/GB" columns as binary units (TiB/GiB),
+// which is what storcli/perccli actually reports.
+func percBytes(num, unit string) int64 {
+	v, err := strconv.ParseFloat(num, 64)
+	if err != nil {
+		return 0
+	}
+	switch strings.ToUpper(unit) {
+	case "TB":
+		return int64(v * (1 << 40))
+	case "GB":
+		return int64(v * (1 << 30))
+	case "MB":
+		return int64(v * (1 << 20))
+	}
+	return 0
 }
 
 // percDiskInfo holds physical disk info from perccli64.
@@ -2227,6 +2266,7 @@ type percDiskInfo struct {
 	DG       int
 	Raid     string // RAID0 / RAID5 / ...
 	Size     string
+	Bytes    int64
 	State    string // Onln / UGood / Rbld / Offln / UBad ...
 	Serial   string
 	Model    string
@@ -2365,11 +2405,12 @@ func parsePercDiskOutput(out string) map[int][]percDiskInfo {
 	res := map[int][]percDiskInfo{}
 	var curEID, curDG, curSlot, curDID int = -1, -1, -1, -1
 	var curSerial, curModel, curIntf, curMed, curSize, curState string
+	var curBytes int64
 	var curMediaErr, curOtherErr, curPredFail int
 	var curSmart bool
 	flush := func() {
 		if curSlot >= 0 && curDID >= 0 {
-			info := percDiskInfo{EID: curEID, Slot: curSlot, DID: curDID, DG: curDG, Size: curSize, State: curState, Serial: curSerial, Model: curModel, Intf: curIntf, Med: curMed, MediaErr: curMediaErr, OtherErr: curOtherErr, PredFail: curPredFail, Smart: curSmart}
+			info := percDiskInfo{EID: curEID, Slot: curSlot, DID: curDID, DG: curDG, Size: curSize, Bytes: curBytes, State: curState, Serial: curSerial, Model: curModel, Intf: curIntf, Med: curMed, MediaErr: curMediaErr, OtherErr: curOtherErr, PredFail: curPredFail, Smart: curSmart}
 			if curDG >= 0 {
 				res[curDG] = append(res[curDG], info)
 			}
@@ -2387,6 +2428,7 @@ func parsePercDiskOutput(out string) map[int][]percDiskInfo {
 			flush()
 			curEID, curDG, curSlot, curDID = -1, -1, -1, -1
 			curSerial, curModel, curIntf, curMed, curSize, curState = "", "", "", "", "", ""
+			curBytes = 0
 			curMediaErr, curOtherErr, curPredFail = 0, 0, 0
 			curSmart = false
 			continue
@@ -2402,6 +2444,7 @@ func parsePercDiskOutput(out string) map[int][]percDiskInfo {
 				curDG, _ = strconv.Atoi(m[5])
 			}
 			curSize = compactSize(m[6], m[7])
+			curBytes = percBytes(m[6], m[7])
 			curIntf = strings.ToUpper(m[8])
 			curMed = strings.ToUpper(m[9])
 			continue
@@ -2412,6 +2455,14 @@ func parsePercDiskOutput(out string) map[int][]percDiskInfo {
 		}
 		if m := modelRe.FindStringSubmatch(trim); m != nil {
 			curModel = strings.TrimSpace(m[1])
+			continue
+		}
+		if m := regexp.MustCompile(`^Raw size\s*=\s*([\d.]+)\s+(\w+)\s+\[0x([0-9a-fA-F]+)\s+Sectors\]`).FindStringSubmatch(trim); m != nil {
+			if sectors, err := strconv.ParseInt(m[3], 16, 64); err == nil {
+				curBytes = sectors * 512
+			} else {
+				curBytes = percBytes(m[1], m[2])
+			}
 			continue
 		}
 		switch {
@@ -3260,6 +3311,7 @@ func showDisks() {
 	type diskChild struct {
 		slot   string
 		size   string
+		bytes  int64
 		dt     string
 		health string
 		serial string
@@ -3334,6 +3386,7 @@ func showDisks() {
 							children = append(children, diskChild{
 								slot:   percSlotLabel(d),
 								size:   d.Size,
+								bytes:  d.Bytes,
 								dt:     cdt,
 								health: ch,
 								serial: serialWithBrand(dev, d.Model, d.Serial),
@@ -3524,7 +3577,10 @@ func showDisks() {
 					if childSlot == "" {
 						childSlot = "-"
 					}
-					childSize := sizeToT(ch.size)
+					childSize := sizeToDisplay(ch.size)
+					if ch.bytes > 0 {
+						childSize = formatBytes(ch.bytes)
+					}
 					if childSize == "" {
 						childSize = "-"
 					}
