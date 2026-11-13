@@ -477,6 +477,35 @@ func TestNVMeLife(t *testing.T) {
 	}
 }
 
+func TestParseMemSlotsDMI(t *testing.T) {
+	// SMBIOS Type 17: 16 GB DDR4-2400 DIMM_A1.
+	l := 0x28
+	b := make([]byte, l)
+	b[0] = 17
+	b[1] = byte(l)
+	b[0x08], b[0x09] = 64, 0
+	b[0x0a], b[0x0b] = 64, 0
+	b[0x0c], b[0x0d] = 0x00, 0x40 // 16384 MB
+	b[0x0e] = 0x09                // DIMM
+	b[0x10] = 1                   // locator
+	b[0x11] = 2                   // bank
+	b[0x12] = 0x1a                // DDR4
+	b[0x15], b[0x16] = 0x60, 0x09 // 2400 MT/s
+	b[0x17] = 3
+	b[0x18] = 4
+	b[0x1a] = 5
+	stringsPart := []byte("DIMM_A1\x00Bank0\x00Samsung\x00SN123\x00M393A2K40\x00\x00")
+	data := append(b, stringsPart...)
+	slots := parseMemSlotsDMI(data)
+	if len(slots) != 1 {
+		t.Fatalf("slots = %+v", slots)
+	}
+	if slots[0].locator != "DIMM_A1" || slots[0].size != "16G" ||
+		slots[0].typ != "DDR4" || slots[0].speed != "2400" {
+		t.Errorf("slot = %+v", slots[0])
+	}
+}
+
 func TestFormatBytes(t *testing.T) {
 	cases := []struct {
 		bytes int64

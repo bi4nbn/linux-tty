@@ -3867,7 +3867,7 @@ func hwMemTotal() string {
 	return "-"
 }
 
-func hwMemSlots() []hwMemSlot {
+func hwMemSlotsDmidecode() []hwMemSlot {
 	out, err := run("dmidecode", "-t", "memory")
 	if err != nil {
 		return nil
@@ -3912,6 +3912,117 @@ func hwMemSlots() []hwMemSlot {
 	}
 	flush()
 	return slots
+}
+
+func dmiString(area []byte, idx int) string {
+	if idx <= 0 {
+		return ""
+	}
+	parts := bytes.Split(area, []byte{0})
+	if idx-1 >= len(parts) {
+		return ""
+	}
+	return strings.TrimSpace(string(parts[idx-1]))
+}
+
+func formatMemMB(mb int64) string {
+	if mb >= 1024 {
+		g := float64(mb) / 1024
+		if mb%1024 == 0 {
+			return fmt.Sprintf("%.0fG", g)
+		}
+		return fmt.Sprintf("%.1fG", g)
+	}
+	return fmt.Sprintf("%dM", mb)
+}
+
+func dmiMemType(t byte) string {
+	switch t {
+	case 0x03:
+		return "DRAM"
+	case 0x07:
+		return "DDR"
+	case 0x12:
+		return "DDR2"
+	case 0x18:
+		return "DDR3"
+	case 0x1A:
+		return "DDR4"
+	case 0x1B:
+		return "LPDDR4"
+	case 0x1C:
+		return "DDR5"
+	case 0x1D:
+		return "LPDDR5"
+	}
+	return ""
+}
+
+func parseMemSlotsDMI(data []byte) []hwMemSlot {
+	var slots []hwMemSlot
+	off := 0
+	for off+4 <= len(data) {
+		typ := data[off]
+		l := int(data[off+1])
+		if l < 4 || off+l > len(data) {
+			break
+		}
+		strStart := off + l
+		strEnd := strStart
+		for strEnd+1 < len(data) && !(data[strEnd] == 0 && data[strEnd+1] == 0) {
+			strEnd++
+		}
+		if strEnd+1 >= len(data) {
+			strEnd = len(data) - 2
+		}
+		if typ == 17 && l >= 0x15 {
+			locator := dmiString(data[strStart:strEnd], int(data[off+0x10]))
+			if locator != "" {
+				size := int(data[off+0x0c]) | int(data[off+0x0d])<<8
+				sizeStr := ""
+				switch {
+				case size == 0:
+					sizeStr = "empty"
+				case size == 0xFFFF:
+					sizeStr = "?"
+				case size == 0x7FFF && l >= 0x20:
+					ext := uint32(data[off+0x1c]) | uint32(data[off+0x1d])<<8 |
+						uint32(data[off+0x1e])<<16 | uint32(data[off+0x1f])<<24
+					sizeStr = formatMemMB(int64(ext))
+				case size&0x8000 != 0:
+					sizeStr = formatMemMB(int64(size&0x7fff) / 1024)
+				default:
+					sizeStr = formatMemMB(int64(size))
+				}
+				speed := ""
+				if l >= 0x17 {
+					v := int(data[off+0x15]) | int(data[off+0x16])<<8
+					if v > 0 {
+						speed = fmt.Sprintf("%d", v)
+					}
+				}
+				slots = append(slots, hwMemSlot{
+					locator: locator,
+					size:    sizeStr,
+					typ:     dmiMemType(data[off+0x12]),
+					speed:   speed,
+				})
+			}
+		}
+		off = strEnd + 2
+	}
+	return slots
+}
+
+func hwMemSlots() []hwMemSlot {
+	if slots := hwMemSlotsDmidecode(); len(slots) > 0 {
+		return slots
+	}
+	data, err := os.ReadFile("/sys/firmware/dmi/tables/DMI")
+	if err != nil {
+		return nil
+	}
+	return parseMemSlotsDMI(data)
 }
 
 func hwWrap(prefix string, items []string, width int) []string {
@@ -4099,17 +4210,26 @@ func hardwareLines(width int) []string {
 	slots := hwMemSlots()
 	if len(slots) > 0 {
 		used := 0
+		empty := 0
 		var items []string
 		for _, s := range slots {
 			if s.size == "empty" {
-				items = append(items, s.locator+":-")
-			} else {
-				used++
-				items = append(items, s.locator+":"+s.size)
+				empty++
+				if len(slots) <= 32 {
+					items = append(items, s.locator+":-")
+				}
+				continue
 			}
+			used++
+			items = append(items, s.locator+":"+s.size)
 		}
 		lines = append(lines, fmt.Sprintf("DIMM   : %d/%d used", used, len(slots)))
 		lines = append(lines, hwWrap("  ", items, width)...)
+		if len(slots) > 32 && empty > 0 {
+			lines = append(lines, fmt.Sprintf("  empty: %d slots", empty))
+		}
+	} else {
+		lines = append(lines, "DIMM   : no SMBIOS memory devices (need dmidecode or DMI table)")
 	}
 	lines = append(lines, hwRAIDLine())
 	lines = append(lines, hwDiskLines(width)...)
