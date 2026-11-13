@@ -3807,14 +3807,18 @@ func drawMenu() {
 		serverName = "-"
 	}
 	serverSN := hwServerSN()
-	fmt.Printf(" Model    : %s\n", truncateStr(serverName, 60))
-	fmt.Printf(" SN       : %s\n", truncateStr(serverSN, 60))
+	serverLine := serverName
+	if serverSN != "" && serverSN != "-" {
+		serverLine += "  SN:" + serverSN
+	}
+	fmt.Printf(" Server   : %s\n", truncateStr(serverLine, 60))
 	if len(model) > 40 {
 		model = model[:40]
 	}
 	fmt.Printf(" CPU      : %s x %s (%d threads)\n", sockets, model, threads)
 	fmt.Printf(" Memory   : %s\n", mem)
-	fmt.Printf(" Kernel   : %-26s Boot : %s\n", kernel, boot)
+	fmt.Printf(" Kernel   : %s\n", kernel)
+	fmt.Printf(" Boot     : %s\n", boot)
 	fmt.Printf(" Version  : %s\n", version)
 	fmt.Printf(" IP       : %s\n", ipStr)
 	fmt.Println(strings.Repeat("-", w))
