@@ -3867,6 +3867,29 @@ func hwMemTotal() string {
 	return "-"
 }
 
+func formatMemSize(v string) string {
+	v = strings.TrimSpace(v)
+	low := strings.ToLower(v)
+	if strings.Contains(low, "no module") {
+		return "empty"
+	}
+	f := strings.Fields(v)
+	if len(f) >= 2 {
+		n, err := strconv.ParseInt(f[0], 10, 64)
+		if err == nil {
+			switch strings.ToUpper(f[1]) {
+			case "MB":
+				return formatMemMB(n)
+			case "GB":
+				return formatMemMB(n * 1024)
+			case "KB":
+				return formatMemMB(n / 1024)
+			}
+		}
+	}
+	return v
+}
+
 func hwMemSlotsDmidecode() []hwMemSlot {
 	out, err := run("dmidecode", "-t", "memory")
 	if err != nil {
@@ -3895,14 +3918,7 @@ func hwMemSlotsDmidecode() []hwMemSlot {
 		case strings.HasPrefix(t, "Locator:"):
 			cur.locator = strings.TrimSpace(strings.TrimPrefix(t, "Locator:"))
 		case strings.HasPrefix(t, "Size:"):
-			v := strings.TrimSpace(strings.TrimPrefix(t, "Size:"))
-			if strings.Contains(strings.ToLower(v), "no module") {
-				cur.size = "empty"
-			} else {
-				v = strings.ToUpper(strings.ReplaceAll(v, " ", ""))
-				v = strings.TrimSuffix(v, "B")
-				cur.size = v
-			}
+			cur.size = formatMemSize(strings.TrimSpace(strings.TrimPrefix(t, "Size:")))
 		case strings.HasPrefix(t, "Type:") && cur.typ == "":
 			cur.typ = strings.TrimSpace(strings.TrimPrefix(t, "Type:"))
 		case strings.HasPrefix(t, "Speed:"):
@@ -4061,28 +4077,36 @@ func hwKV(out, key string) string {
 
 func hwRAIDLine() string {
 	for _, tool := range percToolPaths() {
-		out, err := run(tool, "/c0", "show")
-		if err != nil {
-			continue
+		for _, args := range [][]string{{"/c0", "show"}, {"/c0", "show", "all"}} {
+			out, err := run(tool, args...)
+			if err != nil {
+				continue
+			}
+			model := hwKV(out, "Model")
+			if model == "" {
+				model = hwKV(out, "Adapter Type")
+			}
+			if model == "" {
+				model = hwKV(out, "Product Name")
+			}
+			if model == "" {
+				continue
+			}
+			fw := hwKV(out, "Firmware Version")
+			status := hwKV(out, "Controller Status")
+			vd := hwKV(out, "Virtual Drives")
+			line := "RAID   : " + model
+			if fw != "" {
+				line += "  FW:" + fw
+			}
+			if status != "" {
+				line += "  " + status
+			}
+			if vd != "" {
+				line += "  VD:" + vd
+			}
+			return line
 		}
-		model := hwKV(out, "Model")
-		if model == "" {
-			continue
-		}
-		fw := hwKV(out, "Firmware Version")
-		status := hwKV(out, "Controller Status")
-		vd := hwKV(out, "Virtual Drives")
-		line := "RAID   : " + model
-		if fw != "" {
-			line += "  FW:" + fw
-		}
-		if status != "" {
-			line += "  " + status
-		}
-		if vd != "" {
-			line += "  VD:" + vd
-		}
-		return line
 	}
 	if hp := hpToolPath(); hp != "" {
 		out, err := run(hp, "ctrl", "all", "show", "status")
@@ -4102,6 +4126,16 @@ func hwRAIDLine() string {
 					return "RAID   : " + model + "  " + status
 				}
 				return "RAID   : " + model
+			}
+		}
+	}
+	if out, err := run("lspci"); err == nil {
+		for _, line := range strings.Split(out, "\n") {
+			low := strings.ToLower(line)
+			if strings.Contains(low, "raid bus controller") {
+				if i := strings.Index(line, ": "); i >= 0 {
+					return "RAID   : " + strings.TrimSpace(line[i+2:])
+				}
 			}
 		}
 	}
@@ -4215,9 +4249,6 @@ func hardwareLines(width int) []string {
 		for _, s := range slots {
 			if s.size == "empty" {
 				empty++
-				if len(slots) <= 32 {
-					items = append(items, s.locator+":-")
-				}
 				continue
 			}
 			used++
@@ -4225,7 +4256,7 @@ func hardwareLines(width int) []string {
 		}
 		lines = append(lines, fmt.Sprintf("DIMM   : %d/%d used", used, len(slots)))
 		lines = append(lines, hwWrap("  ", items, width)...)
-		if len(slots) > 32 && empty > 0 {
+		if empty > 0 {
 			lines = append(lines, fmt.Sprintf("  empty: %d slots", empty))
 		}
 	} else {
