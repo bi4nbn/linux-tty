@@ -3771,26 +3771,7 @@ func drawMenu() {
 		ipStr = strings.ReplaceAll(ipStr, nic+"(", colored+"(")
 		ipStr = strings.ReplaceAll(ipStr, nic+"[", colored+"[")
 	}
-	mem := "unknown"
-	if memData, err := os.ReadFile("/proc/meminfo"); err == nil {
-		for _, line := range strings.Split(string(memData), "\n") {
-			if strings.HasPrefix(line, "MemTotal:") {
-				fields := strings.Fields(line)
-				if len(fields) >= 2 {
-					if kb, err := strconv.Atoi(fields[1]); err == nil {
-						if kb >= 1024*1024 {
-							mem = fmt.Sprintf("%.1fG", float64(kb)/(1024*1024))
-						} else if kb >= 1024 {
-							mem = fmt.Sprintf("%.0fM", float64(kb)/1024)
-						} else {
-							mem = fmt.Sprintf("%dK", kb)
-						}
-					}
-				}
-				break
-			}
-		}
-	}
+	mem := hwMemTotal()
 	boot := "Legacy-BIOS"
 	if st, err := os.Stat("/sys/firmware/efi"); err == nil && st.IsDir() {
 		boot = "UEFI"
@@ -3900,7 +3881,50 @@ func hwServerSN() string {
 	return "-"
 }
 
+func memSizeMB(v string) int64 {
+	v = strings.TrimSpace(strings.ToUpper(v))
+	if v == "" || v == "EMPTY" || v == "?" || v == "-" {
+		return 0
+	}
+	unit := v[len(v)-1]
+	num := strings.TrimSpace(v[:len(v)-1])
+	f, err := strconv.ParseFloat(num, 64)
+	if err != nil {
+		return 0
+	}
+	switch unit {
+	case 'G':
+		return int64(f * 1024)
+	case 'M':
+		return int64(f)
+	case 'K':
+		return int64(f / 1024)
+	}
+	return 0
+}
+
+var (
+	hwMemSlotsOnce sync.Once
+	hwMemSlotsList []hwMemSlot
+)
+
+func hwMemSlotsCached() []hwMemSlot {
+	hwMemSlotsOnce.Do(func() {
+		hwMemSlotsList = hwMemSlots()
+	})
+	return hwMemSlotsList
+}
+
 func hwMemTotal() string {
+	var mb int64
+	for _, s := range hwMemSlotsCached() {
+		mb += memSizeMB(s.size)
+	}
+	if mb > 0 {
+		return formatMemMB(mb)
+	}
+	// Fallback: usable memory is slightly below installed capacity; round up
+	// to the nearest 8G so 62.4G / 7.5G still display as 64G / 8G.
 	data, err := os.ReadFile("/proc/meminfo")
 	if err != nil {
 		return "-"
@@ -3913,17 +3937,13 @@ func hwMemTotal() string {
 		if len(f) < 2 {
 			break
 		}
-		kb, err := strconv.Atoi(f[1])
+		kb, err := strconv.ParseInt(f[1], 10, 64)
 		if err != nil {
 			break
 		}
-		if kb >= 1024*1024 {
-			return fmt.Sprintf("%.0fG", float64(kb)/(1024*1024))
-		}
-		if kb >= 1024 {
-			return fmt.Sprintf("%.0fM", float64(kb)/1024)
-		}
-		return fmt.Sprintf("%dK", kb)
+		gib := float64(kb) / (1024 * 1024)
+		rounded := int64((gib+7.999)/8) * 8
+		return fmt.Sprintf("%.0fG", float64(rounded))
 	}
 	return "-"
 }
@@ -4302,7 +4322,7 @@ func hardwareLines(width int) []string {
 		fmt.Sprintf("CPU    : %s x %s (%d threads)", sockets, cpu, threads),
 		"Memory : " + hwMemTotal(),
 	}
-	slots := hwMemSlots()
+	slots := hwMemSlotsCached()
 	if len(slots) > 0 {
 		used := 0
 		empty := 0
