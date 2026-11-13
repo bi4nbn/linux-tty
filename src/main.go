@@ -3804,7 +3804,7 @@ func drawMenu() {
 		right = 0
 	}
 	fmt.Printf("%s %s %s\n", strings.Repeat("=", tp), title, strings.Repeat("=", right))
-	fmt.Printf(" %-9s %s\n", "Hostname:", host)
+	fmt.Printf(" %-8s : %s\n", "Hostname", host)
 	serverVendor := hwFirst("/sys/class/dmi/id/sys_vendor")
 	serverModel := hwFirst("/sys/class/dmi/id/product_name")
 	serverName := strings.TrimSpace(serverVendor + " " + serverModel)
@@ -3812,17 +3812,17 @@ func drawMenu() {
 		serverName = "-"
 	}
 	serverSN := hwServerSN()
-	fmt.Printf(" %-9s %s\n", "Server:", truncateStr(serverName, 60))
-	fmt.Printf(" %-9s %s\n", "SN:", truncateStr(serverSN, 60))
+	fmt.Printf(" %-8s : %s\n", "Server", truncateStr(serverName, 60))
+	fmt.Printf(" %-8s : %s\n", "SN", truncateStr(serverSN, 60))
 	if len(model) > 40 {
 		model = model[:40]
 	}
-	fmt.Printf(" %-9s %s x %s (%d threads)\n", "CPU:", sockets, model, threads)
-	fmt.Printf(" %-9s %s\n", "Memory:", mem)
-	fmt.Printf(" %-9s %s\n", "Kernel:", kernel)
-	fmt.Printf(" %-9s %s\n", "Boot:", boot)
-	fmt.Printf(" %-9s %s\n", "Version:", version)
-	fmt.Printf(" %-9s %s\n", "IP:", ipStr)
+	fmt.Printf(" %-8s : %s x %s (%d threads)\n", "CPU", sockets, model, threads)
+	fmt.Printf(" %-8s : %s\n", "Memory", mem)
+	fmt.Printf(" %-8s : %s\n", "Kernel", kernel)
+	fmt.Printf(" %-8s : %s\n", "Boot", boot)
+	fmt.Printf(" %-8s : %s\n", "Version", version)
+	fmt.Printf(" %-8s : %s\n", "IP", ipStr)
 	fmt.Println(strings.Repeat("-", w))
 	fmt.Println("  1. Configure network - static IP")
 	fmt.Println("  2. Configure network - DHCP")
