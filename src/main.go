@@ -430,6 +430,14 @@ func nicOperstate(nic string) string {
 	return readFileTrim("/sys/class/net/" + nic + "/operstate")
 }
 
+func nicLinkLabel(nic string) string {
+	state := nicOperstate(nic)
+	if state == "up" {
+		return "\033[32mlink=up\033[0m"
+	}
+	return "link=" + state
+}
+
 // detectDistro reads /etc/os-release and sets netBackend.
 // RHEL family (centos/rhel/rocky/almalinux/fedora) -> "rhel"
 // Debian family (debian/ubuntu/kali) -> "debian" or "netplan"
@@ -1423,7 +1431,7 @@ func staticConfig() {
 	}
 	fmt.Println("Interfaces:")
 	for i, n := range nics {
-		fmt.Printf("  %d. %-16s link=%s\n", i+1, n, nicOperstate(n))
+		fmt.Printf("  %d. %-16s %s\n", i+1, n, nicLinkLabel(n))
 	}
 	// choose NIC
 	sel, intr := ask("Select interface number: ")
@@ -1776,7 +1784,7 @@ func dhcpConfig() {
 	fmt.Println("===================== NETWORK CONFIG (dhcp) =====================")
 	fmt.Println("Interfaces:")
 	for i, n := range nics {
-		fmt.Printf("  %d. %-16s link=%s\n", i+1, n, nicOperstate(n))
+		fmt.Printf("  %d. %-16s %s\n", i+1, n, nicLinkLabel(n))
 	}
 	sel, intr := ask("Select interface number: ")
 	if intr {
