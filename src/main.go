@@ -3635,6 +3635,29 @@ func showDisks() {
 
 // ---------- menu header ----------
 
+func normalizeCPUModel(model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return model
+	}
+	prefixes := []string{
+		"Intel(R) Xeon(R) CPU ",
+		"Intel(R) Xeon(R) ",
+		"Intel(R) Core(TM) ",
+		"Intel(R) ",
+		"Xeon(R) CPU ",
+		"Xeon(R) ",
+		"CPU ",
+	}
+	low := strings.ToLower(model)
+	for _, p := range prefixes {
+		if strings.HasPrefix(low, strings.ToLower(p)) {
+			return strings.TrimSpace(model[len(p):])
+		}
+	}
+	return model
+}
+
 func cpuInfo() (sockets, model string) {
 	out, _ := run("lscpu")
 	for _, line := range strings.Split(out, "\n") {
@@ -3657,6 +3680,7 @@ func cpuInfo() (sockets, model string) {
 			}
 		}
 	}
+	model = normalizeCPUModel(model)
 	if sockets == "" {
 		// count unique physical ids
 		seen := map[string]bool{}

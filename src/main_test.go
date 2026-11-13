@@ -532,6 +532,20 @@ func TestFormatBytes(t *testing.T) {
 	}
 }
 
+func TestNormalizeCPUModel(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"E5-2686 v4 @ 2.30GHz", "E5-2686 v4 @ 2.30GHz"},
+		{"Xeon(R) CPU E5-2686 v4", "E5-2686 v4"},
+		{"Intel(R) Xeon(R) CPU E5-2686 v4", "E5-2686 v4"},
+		{"EPYC 7742", "EPYC 7742"},
+	}
+	for _, c := range cases {
+		if got := normalizeCPUModel(c.in); got != c.want {
+			t.Errorf("normalizeCPUModel(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestBrandOf(t *testing.T) {
 	cases := []struct{ model, want string }{
 		{"INTEL SSDSC2KB480G7", "INTEL"},
