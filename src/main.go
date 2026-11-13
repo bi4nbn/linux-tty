@@ -3800,6 +3800,15 @@ func drawMenu() {
 	}
 	fmt.Printf("%s %s %s\n", strings.Repeat("=", tp), title, strings.Repeat("=", right))
 	fmt.Printf(" Hostname : %s\n", host)
+	serverVendor := hwFirst("/sys/class/dmi/id/sys_vendor")
+	serverModel := hwFirst("/sys/class/dmi/id/product_name")
+	serverName := strings.TrimSpace(serverVendor + " " + serverModel)
+	if serverName == "" || serverName == "-" {
+		serverName = "-"
+	}
+	serverSN := hwServerSN()
+	fmt.Printf(" Model    : %s\n", truncateStr(serverName, 60))
+	fmt.Printf(" SN       : %s\n", truncateStr(serverSN, 60))
 	if len(model) > 40 {
 		model = model[:40]
 	}
