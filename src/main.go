@@ -3821,6 +3821,348 @@ func drawMenu() {
 	fmt.Println(strings.Repeat("=", w))
 }
 
+// ---------- hardware overview (p1) ----------
+
+type hwMemSlot struct {
+	locator string
+	size    string
+	typ     string
+	speed   string
+}
+
+func hwFirst(paths ...string) string {
+	for _, p := range paths {
+		if v := strings.TrimSpace(readFileTrim(p)); v != "" {
+			return v
+		}
+	}
+	return "-"
+}
+
+func hwMemTotal() string {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return "-"
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "MemTotal:") {
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) < 2 {
+			break
+		}
+		kb, err := strconv.Atoi(f[1])
+		if err != nil {
+			break
+		}
+		if kb >= 1024*1024 {
+			return fmt.Sprintf("%.0fG", float64(kb)/(1024*1024))
+		}
+		if kb >= 1024 {
+			return fmt.Sprintf("%.0fM", float64(kb)/1024)
+		}
+		return fmt.Sprintf("%dK", kb)
+	}
+	return "-"
+}
+
+func hwMemSlots() []hwMemSlot {
+	out, err := run("dmidecode", "-t", "memory")
+	if err != nil {
+		return nil
+	}
+	var slots []hwMemSlot
+	var cur hwMemSlot
+	inDev := false
+	flush := func() {
+		if inDev && cur.locator != "" {
+			slots = append(slots, cur)
+		}
+		cur = hwMemSlot{}
+	}
+	for _, line := range strings.Split(out, "\n") {
+		t := strings.TrimSpace(line)
+		if t == "Memory Device" {
+			flush()
+			inDev = true
+			continue
+		}
+		if !inDev {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(t, "Locator:"):
+			cur.locator = strings.TrimSpace(strings.TrimPrefix(t, "Locator:"))
+		case strings.HasPrefix(t, "Size:"):
+			v := strings.TrimSpace(strings.TrimPrefix(t, "Size:"))
+			if strings.Contains(strings.ToLower(v), "no module") {
+				cur.size = "empty"
+			} else {
+				v = strings.ToUpper(strings.ReplaceAll(v, " ", ""))
+				v = strings.TrimSuffix(v, "B")
+				cur.size = v
+			}
+		case strings.HasPrefix(t, "Type:") && cur.typ == "":
+			cur.typ = strings.TrimSpace(strings.TrimPrefix(t, "Type:"))
+		case strings.HasPrefix(t, "Speed:"):
+			v := strings.TrimSpace(strings.TrimPrefix(t, "Speed:"))
+			cur.speed = strings.Fields(v)[0]
+		}
+	}
+	flush()
+	return slots
+}
+
+func hwWrap(prefix string, items []string, width int) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	var lines []string
+	line := prefix
+	for _, it := range items {
+		cand := line + " " + it
+		if len(cand) > width && line != prefix {
+			lines = append(lines, line)
+			line = prefix + " " + it
+		} else {
+			line = cand
+		}
+	}
+	if line != prefix {
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func hwKV(out, key string) string {
+	for _, line := range strings.Split(out, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, key+" =") {
+			return strings.TrimSpace(strings.TrimPrefix(t, key+" ="))
+		}
+		if strings.HasPrefix(t, key+":") {
+			return strings.TrimSpace(strings.TrimPrefix(t, key+":"))
+		}
+	}
+	return ""
+}
+
+func hwRAIDLine() string {
+	for _, tool := range percToolPaths() {
+		out, err := run(tool, "/c0", "show")
+		if err != nil {
+			continue
+		}
+		model := hwKV(out, "Model")
+		if model == "" {
+			continue
+		}
+		fw := hwKV(out, "Firmware Version")
+		status := hwKV(out, "Controller Status")
+		vd := hwKV(out, "Virtual Drives")
+		line := "RAID   : " + model
+		if fw != "" {
+			line += "  FW:" + fw
+		}
+		if status != "" {
+			line += "  " + status
+		}
+		if vd != "" {
+			line += "  VD:" + vd
+		}
+		return line
+	}
+	if hp := hpToolPath(); hp != "" {
+		out, err := run(hp, "ctrl", "all", "show", "status")
+		if err == nil {
+			model, status := "", ""
+			for _, line := range strings.Split(out, "\n") {
+				t := strings.TrimSpace(line)
+				if strings.HasPrefix(t, "Smart Array ") {
+					model = t
+				}
+				if strings.HasPrefix(t, "Controller Status:") {
+					status = strings.TrimSpace(strings.TrimPrefix(t, "Controller Status:"))
+				}
+			}
+			if model != "" {
+				if status != "" {
+					return "RAID   : " + model + "  " + status
+				}
+				return "RAID   : " + model
+			}
+		}
+	}
+	return "RAID   : none"
+}
+
+func hwDiskLines(width int) []string {
+	disks := allDisks()
+	hdd, ssd := 0, 0
+	var rows []string
+	for _, dev := range disks {
+		size := diskSizeHuman(dev)
+		if size == "" || size == "-" {
+			continue
+		}
+		typ := diskType(dev)
+		if strings.Contains(typ, "HDD") {
+			hdd++
+		} else if strings.Contains(typ, "SSD") || strings.Contains(typ, "NVMe") {
+			ssd++
+		}
+		_, model, serial := diskInfo(dev)
+		serial = serialWithBrand(dev, model, serial)
+		rows = append(rows, fmt.Sprintf("  %-8s %-9s %-6s %-24s %s",
+			dev, truncateStr(typ, 9), size, truncateStr(model, 24), serial))
+	}
+	lines := []string{fmt.Sprintf("Disks  : HDD %d | SSD %d", hdd, ssd),
+		"  " + fmt.Sprintf("%-8s %-9s %-6s %-24s %s", "NAME", "TYPE", "SIZE", "MODEL", "SERIAL")}
+	lines = append(lines, rows...)
+	return lines
+}
+
+func hwIPv4Map() map[string]string {
+	m := map[string]string{}
+	out, err := run("ip", "-o", "-4", "addr", "show", "scope", "global")
+	if err != nil {
+		return m
+	}
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 4 {
+			continue
+		}
+		m[f[1]] = f[3]
+	}
+	return m
+}
+
+func hwNICLines() []string {
+	entries, err := os.ReadDir("/sys/class/net")
+	if err != nil {
+		return nil
+	}
+	ipmap := hwIPv4Map()
+	var rows []string
+	for _, e := range entries {
+		n := e.Name()
+		if n == "lo" || strings.HasPrefix(n, "veth") || strings.HasPrefix(n, "docker") ||
+			strings.HasPrefix(n, "virbr") || strings.HasPrefix(n, "tun") || strings.HasPrefix(n, "tap") {
+			continue
+		}
+		if _, err := os.Stat("/sys/class/net/" + n + "/device"); err != nil {
+			if _, err := os.Stat("/sys/class/net/" + n + "/bonding"); err != nil {
+				continue
+			}
+		}
+		state := nicOperstate(n)
+		link := "Down"
+		if v := readFileTrim("/sys/class/net/" + n + "/carrier"); v == "1" {
+			link = "Up"
+		}
+		speed := "-"
+		if v := readFileTrim("/sys/class/net/" + n + "/speed"); v != "" && v != "-1" {
+			speed = v + " Mb/s"
+		}
+		ip := ipmap[n]
+		if ip == "" {
+			ip = "-"
+		}
+		rows = append(rows, fmt.Sprintf("  %-8s %-7s %-5s %-11s %s", n, state, link, speed, ip))
+	}
+	lines := []string{"NIC    :",
+		"  " + fmt.Sprintf("%-8s %-7s %-5s %-11s %s", "NAME", "STATUS", "LINK", "SPEED", "IP")}
+	return append(lines, rows...)
+}
+
+func hardwareLines(width int) []string {
+	brand := hwFirst("/sys/class/dmi/id/sys_vendor")
+	model := hwFirst("/sys/class/dmi/id/product_name")
+	sn := hwFirst("/sys/class/dmi/id/product_serial")
+	sockets, cpu := cpuInfo()
+	threads := 0
+	if b, err := os.ReadFile("/proc/cpuinfo"); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(line, "processor") {
+				threads++
+			}
+		}
+	}
+	lines := []string{
+		"Server : " + brand + " " + model,
+		"SN     : " + sn,
+		fmt.Sprintf("CPU    : %s x %s (%d threads)", sockets, cpu, threads),
+		"Memory : " + hwMemTotal(),
+	}
+	slots := hwMemSlots()
+	if len(slots) > 0 {
+		used := 0
+		var items []string
+		for _, s := range slots {
+			if s.size == "empty" {
+				items = append(items, s.locator+":-")
+			} else {
+				used++
+				items = append(items, s.locator+":"+s.size)
+			}
+		}
+		lines = append(lines, fmt.Sprintf("DIMM   : %d/%d used", used, len(slots)))
+		lines = append(lines, hwWrap("  ", items, width)...)
+	}
+	lines = append(lines, hwRAIDLine())
+	lines = append(lines, hwDiskLines(width)...)
+	lines = append(lines, hwNICLines()...)
+	return lines
+}
+
+func showHardware() {
+	termRows, termCols := getTTYSize()
+	width := termCols - 2
+	if width < 78 {
+		width = 78
+	}
+	lines := hardwareLines(width)
+	pageSize := termRows - 4
+	if pageSize < 8 {
+		pageSize = 8
+	}
+	var pages [][]string
+	for len(lines) > 0 {
+		n := pageSize
+		if n > len(lines) {
+			n = len(lines)
+		}
+		pages = append(pages, lines[:n])
+		lines = lines[n:]
+	}
+	if len(pages) == 0 {
+		pages = [][]string{{"No hardware information."}}
+	}
+	for i, page := range pages {
+		fmt.Print("\033[2J\033[H")
+		fmt.Println(centerStr("HARDWARE INFO", width))
+		fmt.Println(strings.Repeat("=", width))
+		for _, line := range page {
+			fmt.Println(truncateStr(line, width))
+		}
+		fmt.Println(strings.Repeat("-", width))
+		prompt := "Press Ctrl+C to exit: "
+		if i < len(pages)-1 {
+			prompt = fmt.Sprintf("-- Page %d/%d -- Enter=next, Ctrl+C=exit: ", i+1, len(pages))
+		}
+		_, intr := ask(prompt)
+		if intr {
+			interrupt.Store(0)
+			return
+		}
+		if i == len(pages)-1 {
+			return
+		}
+	}
+}
+
 // ---------- main ----------
 
 func main() {
@@ -3945,6 +4287,8 @@ func main() {
 				continue
 			}
 			// Unreachable on success.
+		case "p1", "P1":
+			showHardware()
 		case "8":
 			// Pull and run the official tty.sh installer. The installer is
 			// asked to skip its own restart (LINUX_TTY_NO_RESTART) so this
