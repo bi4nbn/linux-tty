@@ -3723,11 +3723,7 @@ func drawMenu() {
 		return entries[i].ip < entries[j].ip
 	})
 	var ips []string
-	anyUp := false
 	for _, e := range entries {
-		if nicOperstate(e.nic) == "up" {
-			anyUp = true
-		}
 		if e.v6 {
 			ips = append(ips, e.nic+"["+e.ip+"]")
 		} else {
@@ -3741,9 +3737,6 @@ func drawMenu() {
 	// Clip extremely long multi-IP lines so the menu never wraps.
 	if len(ipStr) > 60 {
 		ipStr = ipStr[:57] + "..."
-	}
-	if anyUp {
-		ipStr = "\033[32m" + ipStr + "\033[0m"
 	}
 	mem := "unknown"
 	if memData, err := os.ReadFile("/proc/meminfo"); err == nil {
