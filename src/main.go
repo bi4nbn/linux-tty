@@ -3839,6 +3839,33 @@ func hwFirst(paths ...string) string {
 	return "-"
 }
 
+func hwValidSN(v string) bool {
+	v = strings.TrimSpace(v)
+	if v == "" || v == "-" {
+		return false
+	}
+	low := strings.ToLower(v)
+	for _, bad := range []string{"not specified", "to be filled", "default string", "system serial number", "none"} {
+		if low == bad || strings.Contains(low, bad) {
+			return false
+		}
+	}
+	return true
+}
+
+func hwServerSN() string {
+	for _, p := range []string{
+		"/sys/class/dmi/id/product_serial",
+		"/sys/class/dmi/id/board_serial",
+		"/sys/class/dmi/id/chassis_serial",
+	} {
+		if v := strings.TrimSpace(readFileTrim(p)); hwValidSN(v) {
+			return v
+		}
+	}
+	return "-"
+}
+
 func hwMemTotal() string {
 	data, err := os.ReadFile("/proc/meminfo")
 	if err != nil {
@@ -4225,7 +4252,7 @@ func hwNICLines() []string {
 func hardwareLines(width int) []string {
 	brand := hwFirst("/sys/class/dmi/id/sys_vendor")
 	model := hwFirst("/sys/class/dmi/id/product_name")
-	sn := hwFirst("/sys/class/dmi/id/product_serial")
+	sn := hwServerSN()
 	sockets, cpu := cpuInfo()
 	threads := 0
 	if b, err := os.ReadFile("/proc/cpuinfo"); err == nil {
