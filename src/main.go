@@ -3831,11 +3831,8 @@ func drawMenu() {
 		serverName = "-"
 	}
 	serverSN := hwServerSN()
-	serverLine := serverName
-	if serverSN != "" && serverSN != "-" {
-		serverLine += "  SN:" + serverSN
-	}
-	fmt.Printf(" Server   : %s\n", truncateStr(serverLine, 60))
+	fmt.Printf(" Server   : %s\n", truncateStr(serverName, 60))
+	fmt.Printf(" SN       : %s\n", truncateStr(serverSN, 60))
 	if len(model) > 40 {
 		model = model[:40]
 	}
