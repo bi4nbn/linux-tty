@@ -3723,7 +3723,11 @@ func drawMenu() {
 		return entries[i].ip < entries[j].ip
 	})
 	var ips []string
+	var upNics []string
 	for _, e := range entries {
+		if nicOperstate(e.nic) == "up" {
+			upNics = append(upNics, e.nic)
+		}
 		if e.v6 {
 			ips = append(ips, e.nic+"["+e.ip+"]")
 		} else {
@@ -3734,9 +3738,14 @@ func drawMenu() {
 	if ipStr == "" {
 		ipStr = "(no IP address yet)"
 	}
-	// Clip extremely long multi-IP lines so the menu never wraps.
+	// Clip on the plain text first, then color names (IP stays default).
 	if len(ipStr) > 60 {
 		ipStr = ipStr[:57] + "..."
+	}
+	for _, nic := range upNics {
+		colored := "\033[32m" + nic + "\033[0m"
+		ipStr = strings.ReplaceAll(ipStr, nic+"(", colored+"(")
+		ipStr = strings.ReplaceAll(ipStr, nic+"[", colored+"[")
 	}
 	mem := "unknown"
 	if memData, err := os.ReadFile("/proc/meminfo"); err == nil {
