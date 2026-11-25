@@ -839,9 +839,8 @@ func bondPrintStatus(c bondSettings) {
 func bondConfig() {
 	fmt.Println("===================== NETWORK CONFIG (bond/eth0) =====================")
 	nics := bondCandidates()
-	if len(nics) < 2 {
-		fmt.Println("ERROR: at least two physical NICs are required for a bond.")
-		fmt.Println("       Found:", strings.Join(nics, " "))
+	if len(nics) < 1 {
+		fmt.Println("ERROR: no physical NIC found for bond/single-NIC mode.")
 		pause()
 		return
 	}
@@ -851,7 +850,7 @@ func bondConfig() {
 	}
 	var slaves []string
 	for {
-		sel, intr := ask("Select 2 or more slave interfaces (space separated, e.g. 1 2): ")
+		sel, intr := ask("Select 1 or more interfaces (space separated, e.g. 1 or 1 2): ")
 		if intr {
 			return
 		}
@@ -870,10 +869,13 @@ func bondConfig() {
 			seen[n] = true
 			slaves = append(slaves, nics[n-1])
 		}
-		if ok && len(slaves) >= 2 {
+		if ok && len(slaves) >= 1 {
 			break
 		}
-		fmt.Println("ERROR: choose at least two different interfaces by number.")
+		fmt.Println("ERROR: choose at least one interface by number.")
+	}
+	if len(slaves) == 1 {
+		fmt.Println("NOTE: single-NIC mode selected - no link redundancy; a one-slave bond will be created.")
 	}
 	name, intr := bondPrompt("Bond interface name", "eth0")
 	if intr {
