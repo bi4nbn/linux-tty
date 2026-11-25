@@ -200,6 +200,40 @@ func bondUpdateUdevRulesForMac(mac, newName string) bool {
 	return changed
 }
 
+func bondCleanStaleLinks(mac, keepName string) {
+	if mac == "" {
+		return
+	}
+	files, _ := filepath.Glob("/etc/systemd/network/*.link")
+	for _, path := range files {
+		if filepath.Base(path) == filepath.Base(bondLinkFile(keepName)) {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		linkMAC, linkName := "", ""
+		for _, line := range strings.Split(string(data), "\n") {
+			t := strings.TrimSpace(line)
+			if strings.HasPrefix(t, "MACAddress=") {
+				linkMAC = strings.TrimSpace(strings.TrimPrefix(t, "MACAddress="))
+			}
+			if strings.HasPrefix(t, "Name=") {
+				linkName = strings.TrimSpace(strings.TrimPrefix(t, "Name="))
+			}
+		}
+		if !strings.EqualFold(linkMAC, mac) || linkName == keepName {
+			continue
+		}
+		os.MkdirAll(bakDir, 0700)
+		backup := filepath.Join(bakDir, "links."+time.Now().Format("20060102_150405"))
+		os.MkdirAll(backup, 0700)
+		os.WriteFile(filepath.Join(backup, filepath.Base(path)), data, 0600)
+		os.Remove(path)
+	}
+}
+
 func bondRepairRenameRules() {
 	files, _ := filepath.Glob("/etc/systemd/network/10-linux-tty-*.link")
 	for _, path := range files {
@@ -218,6 +252,7 @@ func bondRepairRenameRules() {
 			}
 		}
 		if mac != "" && name != "" {
+			bondCleanStaleLinks(mac, name)
 			bondUpdateUdevRulesForMac(mac, name)
 		}
 	}
@@ -288,6 +323,7 @@ func bondRenameExisting(c bondSettings) bool {
 	if mac == "" {
 		mac = c.renameMAC
 	}
+	bondCleanStaleLinks(mac, c.renameTo)
 	bondWriteRenameRule(mac, c.renameFrom, c.renameTo)
 	run("ip", "link", "set", "dev", c.renameFrom, "down")
 	if out, err := run("ip", "link", "set", "dev", c.renameFrom, "name", c.renameTo); err != nil {
