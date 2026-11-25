@@ -3826,7 +3826,7 @@ func drawMenu() {
 	fmt.Println(strings.Repeat("-", w))
 	fmt.Println("  1. Configure network - static IP")
 	fmt.Println("  2. Configure network - DHCP")
-	fmt.Println("  3. Configure network - bond0")
+	fmt.Println("  3. Configure network - bond/eth0")
 	fmt.Println("  4. Show disks")
 	fmt.Println("  5. Ping test")
 	fmt.Println(strings.Repeat("-", w))

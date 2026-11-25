@@ -837,7 +837,7 @@ func bondPrintStatus(c bondSettings) {
 }
 
 func bondConfig() {
-	fmt.Println("===================== NETWORK CONFIG (bond0) =====================")
+	fmt.Println("===================== NETWORK CONFIG (bond/eth0) =====================")
 	nics := bondCandidates()
 	if len(nics) < 2 {
 		fmt.Println("ERROR: at least two physical NICs are required for a bond.")
@@ -875,7 +875,7 @@ func bondConfig() {
 		}
 		fmt.Println("ERROR: choose at least two different interfaces by number.")
 	}
-	name, intr := bondPrompt("Bond interface name", "bond0")
+	name, intr := bondPrompt("Bond interface name", "eth0")
 	if intr {
 		return
 	}
