@@ -24,6 +24,9 @@ type bondSettings struct {
 	gateway string
 	dns1    string
 	dns2    string
+	ipv6    bool
+	v6addr  string
+	v6gw    string
 
 	renameFrom string
 	renameTo   string
@@ -480,6 +483,73 @@ func bondReadDNS() (string, string) {
 	return v, w
 }
 
+func bondReadIPv6() (bool, string, string, bool) {
+	if !bondConfirm("Configure IPv6 now?") {
+		return false, "", "", true
+	}
+	var addr string
+	for i := 0; i < maxTries; i++ {
+		v, intr := bondPrompt("IPv6 address (CIDR, e.g. 2409:8c74::16/64)", "")
+		if intr {
+			return false, "", "", false
+		}
+		if v == "" {
+			continue
+		}
+		if !strings.Contains(v, "/") {
+			v += "/64"
+		}
+		ip, _, err := net.ParseCIDR(v)
+		if err != nil || ip.To4() != nil {
+			fmt.Println("ERROR: invalid IPv6 address/prefix.")
+			continue
+		}
+		addr = v
+		break
+	}
+	if addr == "" {
+		return false, "", "", false
+	}
+	gw, intr := bondPrompt("IPv6 gateway (blank = none)", "")
+	if intr {
+		return false, "", "", false
+	}
+	if gw != "" {
+		ip := net.ParseIP(gw)
+		if ip == nil || ip.To4() != nil {
+			fmt.Println("ERROR: invalid IPv6 gateway.")
+			return false, "", "", false
+		}
+	}
+	return true, addr, gw, true
+}
+
+func debianIPv6Block(path, name string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var out []string
+	in := false
+	for _, raw := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
+		line := strings.TrimRight(raw, "\r")
+		f := strings.Fields(strings.TrimSpace(line))
+		if len(f) >= 3 && f[0] == "iface" && f[1] == name && f[2] == "inet6" {
+			in = true
+			out = append(out, line)
+			continue
+		}
+		if in {
+			if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+				out = append(out, line)
+				continue
+			}
+			break
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
 func ensureIfenslave() bool {
 	if _, err := exec.LookPath("ifenslave"); err == nil {
 		return true
@@ -553,6 +623,21 @@ func bondWriteRHEL(c bondSettings, nmControlled bool) error {
 		}
 		master += "PEERDNS=no\n"
 	}
+	if c.ipv6 {
+		master += "IPV6INIT=yes\nIPV6_AUTOCONF=no\nIPV6_FAILURE_FATAL=no\n"
+		master += "IPV6ADDR=" + c.v6addr + "\n"
+		if c.v6gw != "" {
+			master += "IPV6_DEFAULTGW=" + c.v6gw + "\n"
+		}
+	} else if old, err := os.ReadFile(filepath.Join(ifcfgDir, "ifcfg-"+c.name)); err == nil {
+		// Preserve existing IPv6 settings when the user did not reconfigure them.
+		for _, line := range strings.Split(string(old), "\n") {
+			t := strings.TrimSpace(line)
+			if strings.HasPrefix(t, "IPV6") && strings.Contains(t, "=") {
+				master += t + "\n"
+			}
+		}
+	}
 	if c.mac != "" {
 		master += "MACADDR=" + c.mac + "\n"
 	}
@@ -606,6 +691,15 @@ func bondWriteDebian(c bondSettings) error {
 	if c.mac != "" {
 		b.WriteString("    hwaddress ether " + c.mac + "\n")
 	}
+	if c.ipv6 {
+		b.WriteString("\niface " + c.name + " inet6 static\n")
+		b.WriteString("    address " + c.v6addr + "\n")
+		if c.v6gw != "" {
+			b.WriteString("    gateway " + c.v6gw + "\n")
+		}
+	} else if old := debianIPv6Block(interfacesF, c.name); old != "" {
+		b.WriteString("\n" + old + "\n")
+	}
 	return debianRewriteBlock(c.name, b.String())
 }
 
@@ -627,9 +721,19 @@ func bondWriteNetplan(c bondSettings) error {
 		if m := net.ParseIP(c.netmask).To4(); m != nil {
 			prefix = strconv.Itoa(maskSize(m))
 		}
-		b.WriteString("      dhcp4: false\n      addresses: [" + c.ip + "/" + prefix + "]\n")
-		if c.gateway != "" {
-			b.WriteString("      routes:\n        - to: default\n          via: " + c.gateway + "\n")
+		addrs := []string{c.ip + "/" + prefix}
+		if c.ipv6 {
+			addrs = append(addrs, c.v6addr)
+		}
+		b.WriteString("      dhcp4: false\n      addresses: [" + strings.Join(addrs, ", ") + "]\n")
+		if c.gateway != "" || c.v6gw != "" {
+			b.WriteString("      routes:\n")
+			if c.gateway != "" {
+				b.WriteString("        - to: default\n          via: " + c.gateway + "\n")
+			}
+			if c.v6gw != "" {
+				b.WriteString("        - to: \"::/0\"\n          via: " + c.v6gw + "\n")
+			}
 		}
 	}
 	if c.dns1 != "" {
@@ -992,8 +1096,14 @@ func bondConfig() {
 		c.dns1, c.dns2 = bondReadDNS()
 	}
 	fmt.Println()
+	v6, v6addr, v6gw, ok := bondReadIPv6()
+	if !ok {
+		return
+	}
+	c.ipv6, c.v6addr, c.v6gw = v6, v6addr, v6gw
+	fmt.Println()
 	fmt.Printf("Bond %s: %s\n", c.name, strings.Join(c.slaves, " + "))
-	fmt.Printf("Mode: %s  MAC: %s  IPv4: %s\n", c.mode, func() string {
+	fmt.Printf("Mode: %s  MAC: %s  IPv4: %s  IPv6: %s\n", c.mode, func() string {
 		if c.mac == "" {
 			return "auto"
 		}
@@ -1003,7 +1113,13 @@ func bondConfig() {
 			return "DHCP"
 		}
 		return c.ip + "/" + c.netmask
+	}(), func() string {
+		if !c.ipv6 {
+			return "off"
+		}
+		return c.v6addr
 	}())
+
 	if !bondConfirm("Apply bond now? SSH may drop if it uses a selected NIC") {
 		fmt.Println("Cancelled.")
 		pause()

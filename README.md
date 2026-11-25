@@ -35,6 +35,8 @@
 - 至少选择 2 块物理网卡；自动过滤 `lo`、`docker`、`veth`、`br-` 等虚拟接口
 - 支持 `802.3ad` LACP、`active-backup`、`balance-rr`
 - 支持静态 IPv4 / DHCP
+- IPv4 配置完成后，会单独询问是否配置 IPv6；可填 IPv6 地址/网关，也可以跳过
+- 跳过 IPv6 时会保留接口原有的 IPv6 配置，不会因为重写 bond 而丢掉
 - 可指定 bond 的 MAC 地址；留空则沿用硬件 MAC
 - 接口名可改为 `eth0`；如果 `eth0` 已被物理网卡占用，会提示把该物理口改名为 `eth0old`（或 `<名称>old`），并把它作为 bond 的 slave，同时写 systemd `.link` / udev 规则持久化改名，重启后仍保持 `eth0` 为 bond、原物理口为 `eth0old`
 - 如果安装系统时用 kickstart/udev 把某块网卡固定命名成 `eth0`，工具会把旧规则里的 `NAME="eth0"` 一并改成 `eth0old`，避免重启后物理口抢回 `eth0`
