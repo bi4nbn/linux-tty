@@ -36,7 +36,7 @@
 - 支持 `802.3ad` LACP、`active-backup`、`balance-rr`
 - 支持静态 IPv4 / DHCP
 - 可指定 bond 的 MAC 地址；留空则沿用硬件 MAC
-- 接口名可改为 `eth0`（要求当前不存在同名物理网卡；如果 `eth0` 已被占用会拒绝，避免把管理口改断）
+- 接口名可改为 `eth0`；如果 `eth0` 已被物理网卡占用，会提示把该物理口改名为 `eth0old`（或 `<名称>old`），并把它作为 bond 的 slave，同时写 systemd `.link` / udev 规则持久化改名，重启后仍保持 `eth0` 为 bond、原物理口为 `eth0old`
 - CentOS 7 写入 `/etc/sysconfig/network-scripts/ifcfg-*`，NetworkManager 与 network-scripts 两种模式都兼容
 - Debian 12 写入 `/etc/network/interfaces`，使用 `bond-master`/`bond-slaves`/`bond-mode`；自动识别 `ifenslave` 的 ifupdown hook
 - 写入前备份到 `/var/backups/netcfg/bond.<时间>`；应用失败自动恢复旧配置

@@ -24,6 +24,10 @@ type bondSettings struct {
 	gateway string
 	dns1    string
 	dns2    string
+
+	renameFrom string
+	renameTo   string
+	renameMAC  string
 }
 
 var bondMACRe = regexp.MustCompile(`^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$`)
@@ -45,6 +49,128 @@ func bondIfaceExists(name string) bool {
 func bondIsMaster(name string) bool {
 	_, err := os.Stat("/sys/class/net/" + name + "/bonding")
 	return err == nil
+}
+
+func bondFreeRename(base string) string {
+	base = base + "old"
+	if len(base) > 15 {
+		base = base[:15]
+	}
+	cand := base
+	for i := 1; bondIfaceExists(cand); i++ {
+		suffix := strconv.Itoa(i)
+		if len(base)+len(suffix) > 15 {
+			cand = base[:15-len(suffix)] + suffix
+		} else {
+			cand = base + suffix
+		}
+	}
+	return cand
+}
+
+func bondLinkFile(to string) string {
+	return "/etc/systemd/network/10-linux-tty-" + to + ".link"
+}
+
+func bondWriteRenameRule(from, to string) {
+	mac := readFileTrim("/sys/class/net/" + from + "/address")
+	if mac == "" {
+		return
+	}
+	os.MkdirAll("/etc/systemd/network", 0755)
+	content := "[Match]\nMACAddress=" + mac + "\n\n[Link]\nName=" + to + "\n"
+	writeFileAtomic(bondLinkFile(to), content, 0644)
+	// Also add a udev NAME rule for older udev implementations. Keep the
+	// file line-based so existing local rules are preserved.
+	rulePath := "/etc/udev/rules.d/70-linux-tty-bond-rename.rules"
+	rule := "SUBSYSTEM==\"net\", ACTION==\"add\", ATTR{address}==\"" + strings.ToLower(mac) + "\", NAME=\"" + to + "\"\n"
+	old, _ := os.ReadFile(rulePath)
+	if !strings.Contains(string(old), "ATTR{address}==\""+strings.ToLower(mac)+"\"") {
+		f, err := os.OpenFile(rulePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err == nil {
+			f.WriteString(rule)
+			f.Close()
+		}
+	}
+}
+
+func bondRemoveRenameRule(to string) {
+	os.Remove(bondLinkFile(to))
+	rulePath := "/etc/udev/rules.d/70-linux-tty-bond-rename.rules"
+	data, err := os.ReadFile(rulePath)
+	if err != nil {
+		return
+	}
+	var kept []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, `NAME="`+to+`"`) {
+			continue
+		}
+		if strings.TrimSpace(line) != "" {
+			kept = append(kept, line)
+		}
+	}
+	if len(kept) == 0 {
+		os.Remove(rulePath)
+		return
+	}
+	writeFileAtomic(rulePath, strings.Join(kept, "\n")+"\n", 0644)
+}
+
+func bondDetachFromMaster(name, target string) {
+	link, err := os.Readlink("/sys/class/net/" + name + "/master")
+	if err != nil {
+		return
+	}
+	master := filepath.Base(link)
+	run("ip", "link", "set", "dev", name, "nomaster")
+	if master != "" && master != target && bondIsMaster(master) {
+		run("ip", "link", "set", master, "down")
+		run("ip", "link", "del", master)
+		switch netBackend {
+		case "rhel":
+			os.Remove(filepath.Join(ifcfgDir, "ifcfg-"+master))
+		case "debian":
+			debianRewriteBlock(master, "# replaced by "+target)
+		}
+	}
+}
+
+func bondRenameExisting(c bondSettings) bool {
+	if c.renameFrom == "" || c.renameTo == "" {
+		return true
+	}
+	bondDetachFromMaster(c.renameFrom, c.name)
+	run("ip", "link", "set", "dev", c.renameFrom, "down")
+	if out, err := run("ip", "link", "set", "dev", c.renameFrom, "name", c.renameTo); err != nil {
+		fmt.Printf("ERROR: rename %s -> %s failed: %s\n", c.renameFrom, c.renameTo, out)
+		return false
+	}
+	if !bondIfaceExists(c.renameTo) {
+		fmt.Printf("ERROR: renamed interface %s not found.\n", c.renameTo)
+		return false
+	}
+	bondWriteRenameRule(c.renameTo, c.renameTo)
+	// Persist the rename in the native config before the bond writer replaces
+	// the slave stanza.
+	switch netBackend {
+	case "rhel":
+		oldPath := filepath.Join(ifcfgDir, "ifcfg-"+c.renameFrom)
+		if b, err := os.ReadFile(oldPath); err == nil {
+			text := string(b)
+			reDev := regexp.MustCompile(`(?m)^DEVICE=.*$`)
+			reName := regexp.MustCompile(`(?m)^NAME=.*$`)
+			text = reDev.ReplaceAllString(text, "DEVICE="+c.renameTo)
+			text = reName.ReplaceAllString(text, "NAME="+c.renameTo)
+			writeFileAtomic(filepath.Join(ifcfgDir, "ifcfg-"+c.renameTo), text, 0644)
+			os.Remove(oldPath)
+		}
+	case "debian":
+		// Remove the old iface/auto stanza; bondWriteDebian will create the
+		// renamed slave stanza explicitly.
+		debianRewriteBlock(c.renameFrom, "# renamed to "+c.renameTo)
+	}
+	return true
 }
 
 func bondCandidates() []string {
@@ -361,6 +487,7 @@ func bondSetMAC(name, mac string) {
 
 func bondPrepareSlaves(c bondSettings) {
 	for _, s := range c.slaves {
+		run("ip", "link", "set", "dev", s, "nomaster")
 		run("ip", "link", "set", "dev", s, "down")
 		run("ip", "-4", "addr", "flush", "dev", s)
 		run("ip", "-6", "addr", "flush", "dev", s, "scope", "global")
@@ -447,7 +574,11 @@ func bondBackup(c bondSettings) string {
 	}
 	switch netBackend {
 	case "rhel":
-		for _, n := range append([]string{c.name}, c.slaves...) {
+		names := append([]string{c.name}, c.slaves...)
+		if c.renameFrom != "" {
+			names = append(names, c.renameFrom)
+		}
+		for _, n := range names {
 			src := filepath.Join(ifcfgDir, "ifcfg-"+n)
 			if b, err := os.ReadFile(src); err == nil {
 				os.WriteFile(filepath.Join(dir, "ifcfg-"+n), b, 0600)
@@ -479,6 +610,16 @@ func bondRestore(dir string, c bondSettings) {
 		return
 	}
 	run("ip", "link", "set", c.name, "down")
+	if c.renameFrom != "" && c.renameTo != "" {
+		if bondIsMaster(c.name) {
+			run("ip", "link", "del", c.name)
+		}
+		if bondIfaceExists(c.renameTo) && !bondIfaceExists(c.renameFrom) {
+			run("ip", "link", "set", c.renameTo, "down")
+			run("ip", "link", "set", "dev", c.renameTo, "name", c.renameFrom)
+		}
+		bondRemoveRenameRule(c.renameTo)
+	}
 	switch netBackend {
 	case "rhel":
 		entries, _ := os.ReadDir(dir)
@@ -596,17 +737,32 @@ func bondConfig() {
 		pause()
 		return
 	}
-	for _, s := range slaves {
-		if s == name {
-			fmt.Printf("ERROR: bond name %s is also a selected slave.\n", name)
+	renameFrom, renameTo := "", ""
+	renameMAC := ""
+	if bondIfaceExists(name) && !bondIsMaster(name) {
+		found := -1
+		for i, s := range slaves {
+			if s == name {
+				found = i
+				break
+			}
+		}
+		if found < 0 {
+			fmt.Printf("ERROR: %s already exists and is not a bond master.\n", name)
+			fmt.Println("       Select it as a slave if you want it renamed and reused, or choose another bond name.")
 			pause()
 			return
 		}
-	}
-	if bondIfaceExists(name) && !bondIsMaster(name) {
-		fmt.Printf("ERROR: interface %s already exists and is not a bond master.\n", name)
-		pause()
-		return
+		renameFrom = name
+		renameTo = bondFreeRename(name)
+		renameMAC = readFileTrim("/sys/class/net/" + name + "/address")
+		fmt.Printf("NOTE: %s already exists. It will be renamed to %s and used as a slave.\n", name, renameTo)
+		if !bondConfirm("Rename " + name + " -> " + renameTo + " and create bond " + name + "?") {
+			fmt.Println("Cancelled.")
+			pause()
+			return
+		}
+		slaves[found] = renameTo
 	}
 	mac, intr := bondPrompt("Bond MAC address (blank = keep hardware MAC)", "")
 	if intr {
@@ -639,7 +795,8 @@ func bondConfig() {
 	if intr {
 		return
 	}
-	c := bondSettings{name: name, slaves: slaves, mode: mode, mac: mac, dhcp: ipSel == "2"}
+	c := bondSettings{name: name, slaves: slaves, mode: mode, mac: mac, dhcp: ipSel == "2",
+		renameFrom: renameFrom, renameTo: renameTo, renameMAC: renameMAC}
 	if !c.dhcp {
 		ip, mask, ok := bondReadIPv4("")
 		if !ok {
@@ -672,6 +829,11 @@ func bondConfig() {
 		return
 	}
 	bak := bondBackup(c)
+	if c.renameFrom != "" && !bondRenameExisting(c) {
+		bondRestore(bak, c)
+		pause()
+		return
+	}
 	var err error
 	switch netBackend {
 	case "rhel":
