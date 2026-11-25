@@ -12,12 +12,13 @@
 |------|------|
 | 1 | 静态 IP（自动备份原配置） |
 | 2 | DHCP |
-| 3 | 磁盘列表（整盘，系统盘标 `[SYS]`） |
-| 4 | Ping 223.6.6.6 |
-| 5 | 重启 |
-| 6 | 关机 |
-| 7 | 进入系统（agetty 账号密码登录，退出自动回菜单） |
-| 8 | 在线更新（优先 curl，其次 wget；需要网络） |
+| 3 | bond0/链路聚合（至少 2 块物理网卡，静态或 DHCP，可指定 MAC/接口名） |
+| 4 | 磁盘列表（整盘，系统盘标 `[SYS]`） |
+| 5 | Ping 223.6.6.6 |
+| 6 | 重启 |
+| 7 | 关机 |
+| 8 | 进入系统（agetty 账号密码登录，退出自动回菜单） |
+| 9 | 在线更新（优先 curl，其次 wget；需要网络） |
 | `666` | 隐藏：免密进入 root shell（菜单不显示） |
 | `p1` | 隐藏：全屏硬件总览（服务器型号/SN、CPU、内存插槽、RAID、磁盘、网卡），Ctrl+C 返回；服务器 SN 直接读 DMI（无需 ipmitool），内存插槽优先 `dmidecode`，缺失时解析 SMBIOS Type 17 |
 
@@ -25,7 +26,21 @@
 
 修改网络配置前会备份到 `/var/backups/netcfg`；如果新配置应用失败，会自动恢复并重新应用旧配置。RHEL 的 ifcfg 重写会保留 `UUID`、`HWADDR`、`MTU`、`ETHTOOL_OPTS` 等非网络地址字段。
 
-菜单 3 同时支持 LSI MegaRAID / Dell PERC（`perccli`/`storcli`）和 **HP Smart Array**（`ssacli`/`hpssacli`/`hpacucli`）。SLOT 列会带上 RAID 模式：单盘逻辑卷显示 `RAID0:12`，多盘阵列父行显示 `RAID5`、子行显示槽位号。Dell PERC 的槽位来自 `EID:Slot`，显示时只取 Slot；HP 逻辑卷通过 `ssacli ctrl all show config detail` 映射回物理盘位。磁盘页按终端高度自动分页填满屏幕：BIOS 25 行时每页 18 行数据，UEFI 48 行时每页 41 行；按 Enter 翻页、输入 `q` 退出。表格按终端实际列数自适应：容量 ≥1T 用 T、<1T 用 G 显示；PERC/SR130 的物理盘容量从 `Raw size` 的扇区数重新计算，不使用阵列卡取整后的显示值。80 列时保持最小六列布局（DEVICE/SIZE/TYPE/SLOT/HEALTH/SERIAL），更宽的 UEFI 控制台会把六列按比例铺满整行，表头和宽屏内容居中；超长字段用 `...` 截断。SERIAL 列显示“品牌-序列号”（如 `INTEL-PHYS...`、`HGST-VKK...`），品牌从阵列卡/udev 的 Model 推断；NVMe 再用 PCI vendor ID 兜底（如 `0x1c5f` → MEMBLAZE、`0x1b96` → WD），识别不到时只显示序列号。没有阵列卡时，`ID_BUS=scsi` 的直连盘再用 `smartctl -i` 区分 SATA / SAS，避免把 SAS HBA 后面的 SATA 盘误标成 SAS。SR130/SAS3008 这类控制器在未配置 VD 时会把物理盘以 `UGood / DG=-` 暴露给 OS；菜单会从 `storcli64` 读取其 EID:Slot、SATA/SAS、SSD/HDD 和序列号，不再回退到系统默认值。HEALTH 由阵列卡工具计算：PERC 读取 `State`、介质/其他错误、预测故障和 SMART，HP 读取物理盘与逻辑盘 `Status`；NVMe 在安装 `smartctl` 时显示**剩余寿命百分比**（100% - `Percentage Used`），失败显示 `BAD`；直通盘用 `smartctl -H` 显示 `OK`/`BAD`。正常 `OK`、预警 `WARN`、故障 `BAD`，无健康数据源的盘显示 `-`。逻辑卷对应多块物理盘时，父行显示 RAID 模式，下面用树形列出每个物理盘位和序列号。NVMe 盘优先通过 SMBIOS 显示 PCIe 插槽名（如 `Slot 2`），没有映射时回退到 PCI 地址。
+菜单 4 同时支持 LSI MegaRAID / Dell PERC（`perccli`/`storcli`）和 **HP Smart Array**（`ssacli`/`hpssacli`/`hpacucli`）。SLOT 列会带上 RAID 模式：单盘逻辑卷显示 `RAID0:12`，多盘阵列父行显示 `RAID5`、子行显示槽位号。Dell PERC 的槽位来自 `EID:Slot`，显示时只取 Slot；HP 逻辑卷通过 `ssacli ctrl all show config detail` 映射回物理盘位。磁盘页按终端高度自动分页填满屏幕：BIOS 25 行时每页 18 行数据，UEFI 48 行时每页 41 行；按 Enter 翻页、输入 `q` 退出。表格按终端实际列数自适应：容量 ≥1T 用 T、<1T 用 G 显示；PERC/SR130 的物理盘容量从 `Raw size` 的扇区数重新计算，不使用阵列卡取整后的显示值。80 列时保持最小六列布局（DEVICE/SIZE/TYPE/SLOT/HEALTH/SERIAL），更宽的 UEFI 控制台会把六列按比例铺满整行，表头和宽屏内容居中；超长字段用 `...` 截断。SERIAL 列显示“品牌-序列号”（如 `INTEL-PHYS...`、`HGST-VKK...`），品牌从阵列卡/udev 的 Model 推断；NVMe 再用 PCI vendor ID 兜底（如 `0x1c5f` → MEMBLAZE、`0x1b96` → WD），识别不到时只显示序列号。没有阵列卡时，`ID_BUS=scsi` 的直连盘再用 `smartctl -i` 区分 SATA / SAS，避免把 SAS HBA 后面的 SATA 盘误标成 SAS。SR130/SAS3008 这类控制器在未配置 VD 时会把物理盘以 `UGood / DG=-` 暴露给 OS；菜单会从 `storcli64` 读取其 EID:Slot、SATA/SAS、SSD/HDD 和序列号，不再回退到系统默认值。HEALTH 由阵列卡工具计算：PERC 读取 `State`、介质/其他错误、预测故障和 SMART，HP 读取物理盘与逻辑盘 `Status`；NVMe 在安装 `smartctl` 时显示**剩余寿命百分比**（100% - `Percentage Used`），失败显示 `BAD`；直通盘用 `smartctl -H` 显示 `OK`/`BAD`。正常 `OK`、预警 `WARN`、故障 `BAD`，无健康数据源的盘显示 `-`。逻辑卷对应多块物理盘时，父行显示 RAID 模式，下面用树形列出每个物理盘位和序列号。NVMe 盘优先通过 SMBIOS 显示 PCIe 插槽名（如 `Slot 2`），没有映射时回退到 PCI 地址。
+
+### Bond / 链路聚合
+
+菜单 3 用于配置 bond（默认名 `bond0`，也可以填 `eth0` 等空闲接口名）：
+
+- 至少选择 2 块物理网卡；自动过滤 `lo`、`docker`、`veth`、`br-` 等虚拟接口
+- 支持 `802.3ad` LACP、`active-backup`、`balance-rr`
+- 支持静态 IPv4 / DHCP
+- 可指定 bond 的 MAC 地址；留空则沿用硬件 MAC
+- 接口名可改为 `eth0`（要求当前不存在同名物理网卡；如果 `eth0` 已被占用会拒绝，避免把管理口改断）
+- CentOS 7 写入 `/etc/sysconfig/network-scripts/ifcfg-*`，NetworkManager 与 network-scripts 两种模式都兼容
+- Debian 12 写入 `/etc/network/interfaces`，使用 `bond-master`/`bond-slaves`/`bond-mode`；自动识别 `ifenslave` 的 ifupdown hook
+- 写入前备份到 `/var/backups/netcfg/bond.<时间>`；应用失败自动恢复旧配置
+- 应用后会显示 bond 状态、当前活动 slave、IP 和 MAC
 
 ### 手动槽位映射
 
@@ -48,12 +63,12 @@ curl -fsSL https://bash.niteng.net/iso/tty.sh | bash
 
 自动完成：下载二进制、安装 systemd unit、关闭 sysrq。装完即跑在 tty1。
 
-已安装的机器可以跑同一条命令更新，也可以直接在控制台菜单按 `8` 更新。
+已安装的机器可以跑同一条命令更新，也可以直接在控制台菜单按 `9` 更新。
 
 安装脚本支持两个环境变量：
 
 - `LINUX_TTY_TARGET=tty1`：安装/重启哪个 tty 实例（默认 `tty1`）
-- `LINUX_TTY_NO_RESTART=1`：只安装二进制，不重启服务（菜单 8 使用，由菜单自己重启当前 tty）
+- `LINUX_TTY_NO_RESTART=1`：只安装二进制，不重启服务（菜单 9 使用，由菜单自己重启当前 tty）
 
 ## 手动部署
 
@@ -134,7 +149,7 @@ cd src && go test ./...
 
 - 二进制 `0700 root:root`，必须 root 运行。
 - `666` 是隐藏免密 root 入口，物理控制台任何人输入即得 root，**仅在物理访问受控的设备上启用**；不需要时删掉 `/usr/local/sbin/linux-root-shell` 即可关闭。
-- 菜单 8 会以 root 执行从 `bash.niteng.net` 下载的安装脚本；无法访问该地址的环境请改用 U 盘/离线安装。
+- 菜单 9 会以 root 执行从 `bash.niteng.net` 下载的安装脚本；无法访问该地址的环境请改用 U 盘/离线安装。
 - 安装脚本会保留上一版二进制为 `/usr/local/sbin/linux-tty.bak`，新版本启动失败时可用于回滚。
 
 ## 卸载

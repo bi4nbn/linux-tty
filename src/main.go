@@ -3826,13 +3826,14 @@ func drawMenu() {
 	fmt.Println(strings.Repeat("-", w))
 	fmt.Println("  1. Configure network - static IP")
 	fmt.Println("  2. Configure network - DHCP")
-	fmt.Println("  3. Show disks")
-	fmt.Println("  4. Ping test")
+	fmt.Println("  3. Configure network - bond0")
+	fmt.Println("  4. Show disks")
+	fmt.Println("  5. Ping test")
 	fmt.Println(strings.Repeat("-", w))
-	fmt.Println("  5. Reboot")
-	fmt.Println("  6. Power off")
-	fmt.Println("  7. Exit and enter the system")
-	fmt.Println("  8. Update tty")
+	fmt.Println("  6. Reboot")
+	fmt.Println("  7. Power off")
+	fmt.Println("  8. Exit and enter the system")
+	fmt.Println("  9. Update tty")
 	fmt.Println(strings.Repeat("=", w))
 }
 
@@ -4449,7 +4450,7 @@ func main() {
 
 	for {
 		drawMenu()
-		choice, intr := ask("Select [1-8]: ")
+		choice, intr := ask("Select [1-9]: ")
 		if eofFlag.Load() {
 			return
 		}
@@ -4469,10 +4470,12 @@ func main() {
 		case "2":
 			dhcpConfig()
 		case "3":
-			showDisks()
+			bondConfig()
 		case "4":
-			pingTest()
+			showDisks()
 		case "5":
+			pingTest()
+		case "6":
 			if confirm("Reboot now?") {
 				fmt.Println("Rebooting ...")
 				syscall.Sync()
@@ -4483,7 +4486,7 @@ func main() {
 				}
 				time.Sleep(10 * time.Second)
 			}
-		case "6":
+		case "7":
 			if confirm("Power off now?") {
 				fmt.Println("Powering off ...")
 				syscall.Sync()
@@ -4494,7 +4497,7 @@ func main() {
 				}
 				time.Sleep(10 * time.Second)
 			}
-		case "7":
+		case "8":
 			// Resolve agetty FIRST, so a missing binary does not leave us in
 			// canonical mode with no way to get back to cbreak.
 			exe, err := exec.LookPath("agetty")
@@ -4521,7 +4524,7 @@ func main() {
 			// Unreachable on success.
 		case "p1", "P1":
 			showHardware()
-		case "8":
+		case "9":
 			// Pull and run the official tty.sh installer. The installer is
 			// asked to skip its own restart (LINUX_TTY_NO_RESTART) so this
 			// menu can restart exactly the tty it is running on.
