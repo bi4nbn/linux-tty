@@ -4408,6 +4408,7 @@ func main() {
 		os.Exit(1)
 	}
 	detectDistro()
+	bondRepairRenameRules()
 	rel = readFileTrim("/etc/linux-tty-release")
 	if rel == "" {
 		rel = "SSCLOUD Linux-TTY Console"

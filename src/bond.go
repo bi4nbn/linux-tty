@@ -31,6 +31,7 @@ type bondSettings struct {
 }
 
 var bondMACRe = regexp.MustCompile(`^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$`)
+var bondUdevBackup string
 var bondNameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 func bondNameOK(s string) bool {
@@ -72,35 +73,171 @@ func bondLinkFile(to string) string {
 	return "/etc/systemd/network/10-linux-tty-" + to + ".link"
 }
 
-func bondWriteRenameRule(from, to string) {
-	mac := readFileTrim("/sys/class/net/" + from + "/address")
+func bondUpdateUdevRules(mac, oldName, newName string) bool {
 	if mac == "" {
-		return
+		return false
 	}
-	os.MkdirAll("/etc/systemd/network", 0755)
-	content := "[Match]\nMACAddress=" + mac + "\n\n[Link]\nName=" + to + "\n"
-	writeFileAtomic(bondLinkFile(to), content, 0644)
-	// Also add a udev NAME rule for older udev implementations. Keep the
-	// file line-based so existing local rules are preserved.
-	rulePath := "/etc/udev/rules.d/70-linux-tty-bond-rename.rules"
-	rule := "SUBSYSTEM==\"net\", ACTION==\"add\", ATTR{address}==\"" + strings.ToLower(mac) + "\", NAME=\"" + to + "\"\n"
-	old, _ := os.ReadFile(rulePath)
-	macMatch := `ATTR{address}=="` + strings.ToLower(mac) + `"`
-	var kept []string
-	for _, line := range strings.Split(string(old), "\n") {
-		if strings.Contains(line, macMatch) {
+	dirs := []string{"/etc/udev/rules.d", "/run/udev/rules.d"}
+	re := regexp.MustCompile(`(?i)(NAME\s*:?=\s*)"` + regexp.QuoteMeta(oldName) + `"`)
+	changed := false
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
 			continue
 		}
-		if strings.TrimSpace(line) != "" {
-			kept = append(kept, line)
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".rules") {
+				continue
+			}
+			path := filepath.Join(dir, e.Name())
+			data, err := os.ReadFile(path)
+			if err != nil || !strings.Contains(strings.ToLower(string(data)), strings.ToLower(mac)) {
+				continue
+			}
+			lines := strings.Split(string(data), "\n")
+			fileChanged := false
+			for i, line := range lines {
+				if !strings.Contains(strings.ToLower(line), strings.ToLower(mac)) {
+					continue
+				}
+				nl := re.ReplaceAllString(line, `${1}"`+newName+`"`)
+				if nl != line {
+					lines[i] = nl
+					fileChanged = true
+				}
+			}
+			if !fileChanged {
+				continue
+			}
+			if bondUdevBackup == "" {
+				os.MkdirAll(bakDir, 0700)
+				bondUdevBackup = filepath.Join(bakDir, "udev."+time.Now().Format("20060102_150405"))
+				os.MkdirAll(bondUdevBackup, 0700)
+			}
+			os.WriteFile(filepath.Join(bondUdevBackup, e.Name()), data, 0600)
+			writeFileAtomic(path, strings.Join(lines, "\n"), 0644)
+			changed = true
 		}
 	}
-	kept = append(kept, strings.TrimSpace(rule))
+	return changed
+}
+
+func bondWriteRenameRule(mac, oldName, newName string) {
+	if mac == "" {
+		mac = readFileTrim("/sys/class/net/" + oldName + "/address")
+	}
+	changed := bondUpdateUdevRules(mac, oldName, newName)
+	os.MkdirAll("/etc/systemd/network", 0755)
+	content := "[Match]\nMACAddress=" + mac + "\n\n[Link]\nName=" + newName + "\n"
+	writeFileAtomic(bondLinkFile(newName), content, 0644)
+	if changed || mac == "" {
+		return
+	}
+	// No existing rule was rewritten; add our own rule.
+	rulePath := "/etc/udev/rules.d/70-linux-tty-bond-rename.rules"
+	line := "SUBSYSTEM==\"net\", ACTION==\"add\", ATTR{address}==\"" + strings.ToLower(mac) + "\", NAME=\"" + newName + "\"\n"
+	old, _ := os.ReadFile(rulePath)
+	var kept []string
+	macMatch := `ATTR{address}=="` + strings.ToLower(mac) + `"`
+	for _, l := range strings.Split(string(old), "\n") {
+		if strings.Contains(l, macMatch) {
+			continue
+		}
+		if strings.TrimSpace(l) != "" {
+			kept = append(kept, l)
+		}
+	}
+	kept = append(kept, strings.TrimSpace(line))
 	writeFileAtomic(rulePath, strings.Join(kept, "\n")+"\n", 0644)
+}
+
+func bondUpdateUdevRulesForMac(mac, newName string) bool {
+	if mac == "" {
+		return false
+	}
+	re := regexp.MustCompile(`(?i)(NAME\s*:?=\s*)"([^"]+)"`)
+	changed := false
+	for _, dir := range []string{"/etc/udev/rules.d"} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".rules") {
+				continue
+			}
+			path := filepath.Join(dir, e.Name())
+			data, err := os.ReadFile(path)
+			if err != nil || !strings.Contains(strings.ToLower(string(data)), strings.ToLower(mac)) {
+				continue
+			}
+			lines := strings.Split(string(data), "\n")
+			fileChanged := false
+			for i, line := range lines {
+				if !strings.Contains(strings.ToLower(line), strings.ToLower(mac)) {
+					continue
+				}
+				m := re.FindStringSubmatch(line)
+				if len(m) < 3 || m[2] == newName {
+					continue
+				}
+				lines[i] = re.ReplaceAllString(line, `${1}"`+newName+`"`)
+				fileChanged = true
+			}
+			if !fileChanged {
+				continue
+			}
+			if bondUdevBackup == "" {
+				os.MkdirAll(bakDir, 0700)
+				bondUdevBackup = filepath.Join(bakDir, "udev."+time.Now().Format("20060102_150405"))
+				os.MkdirAll(bondUdevBackup, 0700)
+			}
+			os.WriteFile(filepath.Join(bondUdevBackup, e.Name()), data, 0600)
+			writeFileAtomic(path, strings.Join(lines, "\n"), 0644)
+			changed = true
+		}
+	}
+	return changed
+}
+
+func bondRepairRenameRules() {
+	files, _ := filepath.Glob("/etc/systemd/network/10-linux-tty-*.link")
+	for _, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		mac, name := "", ""
+		for _, line := range strings.Split(string(data), "\n") {
+			t := strings.TrimSpace(line)
+			if strings.HasPrefix(t, "MACAddress=") {
+				mac = strings.TrimSpace(strings.TrimPrefix(t, "MACAddress="))
+			}
+			if strings.HasPrefix(t, "Name=") {
+				name = strings.TrimSpace(strings.TrimPrefix(t, "Name="))
+			}
+		}
+		if mac != "" && name != "" {
+			bondUpdateUdevRulesForMac(mac, name)
+		}
+	}
 }
 
 func bondRemoveRenameRule(to string) {
 	os.Remove(bondLinkFile(to))
+	if bondUdevBackup != "" {
+		entries, _ := os.ReadDir(bondUdevBackup)
+		for _, e := range entries {
+			b, err := os.ReadFile(filepath.Join(bondUdevBackup, e.Name()))
+			if err == nil {
+				// Restore to /etc/udev/rules.d; /run is ephemeral and will be
+				// regenerated, so only persistent rules need restoration.
+				os.WriteFile(filepath.Join("/etc/udev/rules.d", e.Name()), b, 0644)
+			}
+		}
+		os.RemoveAll(bondUdevBackup)
+		bondUdevBackup = ""
+	}
 	rulePath := "/etc/udev/rules.d/70-linux-tty-bond-rename.rules"
 	data, err := os.ReadFile(rulePath)
 	if err != nil {
@@ -147,6 +284,11 @@ func bondRenameExisting(c bondSettings) bool {
 	}
 	bondDetachFromMaster(c.renameFrom, c.name)
 	os.Remove(bondLinkFile(c.renameFrom))
+	mac := readFileTrim("/sys/class/net/" + c.renameFrom + "/address")
+	if mac == "" {
+		mac = c.renameMAC
+	}
+	bondWriteRenameRule(mac, c.renameFrom, c.renameTo)
 	run("ip", "link", "set", "dev", c.renameFrom, "down")
 	if out, err := run("ip", "link", "set", "dev", c.renameFrom, "name", c.renameTo); err != nil {
 		fmt.Printf("ERROR: rename %s -> %s failed: %s\n", c.renameFrom, c.renameTo, out)
@@ -156,7 +298,6 @@ func bondRenameExisting(c bondSettings) bool {
 		fmt.Printf("ERROR: renamed interface %s not found.\n", c.renameTo)
 		return false
 	}
-	bondWriteRenameRule(c.renameTo, c.renameTo)
 	// Persist the rename in the native config before the bond writer replaces
 	// the slave stanza.
 	switch netBackend {
