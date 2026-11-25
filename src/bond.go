@@ -85,13 +85,18 @@ func bondWriteRenameRule(from, to string) {
 	rulePath := "/etc/udev/rules.d/70-linux-tty-bond-rename.rules"
 	rule := "SUBSYSTEM==\"net\", ACTION==\"add\", ATTR{address}==\"" + strings.ToLower(mac) + "\", NAME=\"" + to + "\"\n"
 	old, _ := os.ReadFile(rulePath)
-	if !strings.Contains(string(old), "ATTR{address}==\""+strings.ToLower(mac)+"\"") {
-		f, err := os.OpenFile(rulePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-		if err == nil {
-			f.WriteString(rule)
-			f.Close()
+	macMatch := `ATTR{address}=="` + strings.ToLower(mac) + `"`
+	var kept []string
+	for _, line := range strings.Split(string(old), "\n") {
+		if strings.Contains(line, macMatch) {
+			continue
+		}
+		if strings.TrimSpace(line) != "" {
+			kept = append(kept, line)
 		}
 	}
+	kept = append(kept, strings.TrimSpace(rule))
+	writeFileAtomic(rulePath, strings.Join(kept, "\n")+"\n", 0644)
 }
 
 func bondRemoveRenameRule(to string) {
@@ -141,6 +146,7 @@ func bondRenameExisting(c bondSettings) bool {
 		return true
 	}
 	bondDetachFromMaster(c.renameFrom, c.name)
+	os.Remove(bondLinkFile(c.renameFrom))
 	run("ip", "link", "set", "dev", c.renameFrom, "down")
 	if out, err := run("ip", "link", "set", "dev", c.renameFrom, "name", c.renameTo); err != nil {
 		fmt.Printf("ERROR: rename %s -> %s failed: %s\n", c.renameFrom, c.renameTo, out)
