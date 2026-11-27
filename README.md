@@ -35,6 +35,7 @@
 - 至少选择 2 块物理网卡；自动过滤 `lo`、`docker`、`veth`、`br-` 等虚拟接口
 - 支持 `802.3ad` LACP、`active-backup`、`balance-rr`
 - 支持静态 IPv4 / DHCP
+- 默认提供快速模式：选完网卡后直接沿用当前 IPv4/MAC/DNS/bond 模式，只需确认一次；需要改 MAC/模式/IP 时输入 `n` 进入高级流程
 - IPv4 配置完成后，会单独询问是否配置 IPv6；可填 IPv6 地址/网关，也可以跳过
 - 跳过 IPv6 时会保留接口原有的 IPv6 配置，不会因为重写 bond 而丢掉
 - 可指定 bond 的 MAC 地址；留空则沿用硬件 MAC

@@ -976,6 +976,177 @@ func bondPrintStatus(c bondSettings) {
 	}
 }
 
+func bondConfirmDefaultYes(prompt string) bool {
+	v, intr := ask(prompt + " [Y/n]: ")
+	if intr {
+		return false
+	}
+	v = strings.ToLower(strings.TrimSpace(v))
+	return v != "n" && v != "no"
+}
+
+func bondCurrentMAC(src string) string {
+	return readFileTrim("/sys/class/net/" + src + "/address")
+}
+
+func bondCurrentMode(name string) string {
+	out, err := run("cat", "/proc/net/bonding/"+name)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "Bonding Mode:") {
+			continue
+		}
+		low := strings.ToLower(line)
+		switch {
+		case strings.Contains(low, "802.3ad"):
+			return "802.3ad"
+		case strings.Contains(low, "active-backup") || strings.Contains(low, "fault-tolerance"):
+			return "active-backup"
+		case strings.Contains(low, "round-robin") || strings.Contains(low, "load balancing"):
+			return "balance-rr"
+		}
+	}
+	return ""
+}
+
+func bondCurrentIPv4(src string) (bool, string, string, string) {
+	ip, mask := "", ""
+	if out, err := run("ip", "-4", "-o", "addr", "show", "dev", src); err == nil {
+		for _, line := range strings.Split(out, "\n") {
+			f := strings.Fields(line)
+			for _, x := range f {
+				if !strings.Contains(x, "/") {
+					continue
+				}
+				addr, pfx, ok := strings.Cut(x, "/")
+				if !ok || !isValidIPv4(addr) {
+					continue
+				}
+				p, err := strconv.Atoi(pfx)
+				if err == nil && p >= 1 && p <= 32 {
+					ip, mask = addr, prefixToMask(p)
+				}
+				break
+			}
+			if ip != "" {
+				break
+			}
+		}
+	}
+	dhcp := ip == ""
+	switch netBackend {
+	case "rhel":
+		if b, err := os.ReadFile(filepath.Join(ifcfgDir, "ifcfg-"+src)); err == nil {
+			txt := strings.ToLower(string(b))
+			if strings.Contains(txt, "bootproto=\"dhcp\"") || strings.Contains(txt, "bootproto=dhcp") {
+				dhcp = true
+			} else if strings.Contains(txt, "bootproto=\"none\"") || strings.Contains(txt, "bootproto=none") ||
+				strings.Contains(txt, "bootproto=\"static\"") || strings.Contains(txt, "bootproto=static") {
+				dhcp = false
+			}
+		}
+	case "debian":
+		if b, err := os.ReadFile(interfacesF); err == nil {
+			inStanza := false
+			for _, line := range strings.Split(string(b), "\n") {
+				f := strings.Fields(strings.TrimSpace(line))
+				if len(f) >= 3 && f[0] == "iface" && f[1] == src {
+					inStanza = true
+					dhcp = f[2] == "dhcp"
+					break
+				}
+			}
+			_ = inStanza
+		}
+	}
+	if ip == "" {
+		dhcp = true
+	}
+	gw := ""
+	if out, err := run("ip", "route", "show", "default"); err == nil {
+		for _, line := range strings.Split(out, "\n") {
+			f := strings.Fields(line)
+			for i := 0; i+1 < len(f); i++ {
+				if f[i] == "via" && isValidIPv4(f[i+1]) {
+					gw = f[i+1]
+					break
+				}
+			}
+			if gw != "" {
+				break
+			}
+		}
+	}
+	return dhcp, ip, mask, gw
+}
+
+func bondCurrentIPv6(src string) (string, string) {
+	addr := ""
+	if out, err := run("ip", "-6", "-o", "addr", "show", "dev", src, "scope", "global"); err == nil {
+		for _, line := range strings.Split(out, "\n") {
+			f := strings.Fields(line)
+			for _, x := range f {
+				if strings.Contains(x, "/") && strings.Contains(x, ":") {
+					addr = x
+					break
+				}
+			}
+			if addr != "" {
+				break
+			}
+		}
+	}
+	gw := ""
+	if out, err := run("ip", "-6", "route", "show", "default"); err == nil {
+		f := strings.Fields(out)
+		for i := 0; i+1 < len(f); i++ {
+			if f[i] == "via" {
+				gw = f[i+1]
+				break
+			}
+		}
+	}
+	return addr, gw
+}
+
+func bondQuickSettings(name string, slaves []string, renameFrom, renameTo, renameMAC string) bondSettings {
+	src := name
+	if !bondIfaceExists(src) && len(slaves) > 0 {
+		src = slaves[0]
+	}
+	c := bondSettings{
+		name:       name,
+		slaves:     slaves,
+		mode:       "active-backup",
+		mac:        bondCurrentMAC(src),
+		renameFrom: renameFrom,
+		renameTo:   renameTo,
+		renameMAC:  renameMAC,
+	}
+	if bondIsMaster(name) {
+		if m := bondCurrentMode(name); m != "" {
+			c.mode = m
+		}
+	}
+	c.dhcp, c.ip, c.netmask, c.gateway = bondCurrentIPv4(src)
+	dns := readResolvConfDNS()
+	for _, d := range dns {
+		if !usableNameserver(d) {
+			continue
+		}
+		if c.dns1 == "" {
+			c.dns1 = d
+		} else if c.dns2 == "" && d != c.dns1 {
+			c.dns2 = d
+		}
+	}
+	c.v6addr, c.v6gw = bondCurrentIPv6(src)
+	c.ipv6 = c.v6addr != ""
+	return c
+}
+
 func bondConfig() {
 	fmt.Println("===================== NETWORK CONFIG (bond/eth0) =====================")
 	nics := bondCandidates()
@@ -1053,54 +1224,60 @@ func bondConfig() {
 		}
 		slaves[found] = renameTo
 	}
-	mac, intr := bondPrompt("Bond MAC address (blank = keep hardware MAC)", "")
-	if intr {
-		return
-	}
-	if !bondMACOK(mac) {
-		fmt.Println("ERROR: invalid MAC address, expected aa:bb:cc:dd:ee:ff.")
-		pause()
-		return
-	}
-	fmt.Println("Bond mode:")
-	fmt.Println("  1. 802.3ad LACP (default)")
-	fmt.Println("  2. active-backup")
-	fmt.Println("  3. balance-rr")
-	modeSel, intr := bondPrompt("Select mode", "1")
-	if intr {
-		return
-	}
-	mode := "802.3ad"
-	switch modeSel {
-	case "2":
-		mode = "active-backup"
-	case "3":
-		mode = "balance-rr"
-	}
-	fmt.Println("IPv4 mode:")
-	fmt.Println("  1. static (default)")
-	fmt.Println("  2. DHCP")
-	ipSel, intr := bondPrompt("Select IPv4 mode", "1")
-	if intr {
-		return
-	}
-	c := bondSettings{name: name, slaves: slaves, mode: mode, mac: mac, dhcp: ipSel == "2",
-		renameFrom: renameFrom, renameTo: renameTo, renameMAC: renameMAC}
-	if !c.dhcp {
-		ip, mask, ok := bondReadIPv4("")
+	quick := bondConfirmDefaultYes("Quick config: keep current IPv4/MAC/DNS/mode")
+	var c bondSettings
+	if quick {
+		c = bondQuickSettings(name, slaves, renameFrom, renameTo, renameMAC)
+	} else {
+		mac, intr := bondPrompt("Bond MAC address (blank = keep hardware MAC)", "")
+		if intr {
+			return
+		}
+		if !bondMACOK(mac) {
+			fmt.Println("ERROR: invalid MAC address, expected aa:bb:cc:dd:ee:ff.")
+			pause()
+			return
+		}
+		fmt.Println("Bond mode:")
+		fmt.Println("  1. 802.3ad LACP (default)")
+		fmt.Println("  2. active-backup")
+		fmt.Println("  3. balance-rr")
+		modeSel, intr := bondPrompt("Select mode", "1")
+		if intr {
+			return
+		}
+		mode := "802.3ad"
+		switch modeSel {
+		case "2":
+			mode = "active-backup"
+		case "3":
+			mode = "balance-rr"
+		}
+		fmt.Println("IPv4 mode:")
+		fmt.Println("  1. static (default)")
+		fmt.Println("  2. DHCP")
+		ipSel, intr := bondPrompt("Select IPv4 mode", "1")
+		if intr {
+			return
+		}
+		c = bondSettings{name: name, slaves: slaves, mode: mode, mac: mac, dhcp: ipSel == "2",
+			renameFrom: renameFrom, renameTo: renameTo, renameMAC: renameMAC}
+		if !c.dhcp {
+			ip, mask, ok := bondReadIPv4("")
+			if !ok {
+				return
+			}
+			c.ip, c.netmask = ip, mask
+			c.gateway = bondReadGateway(ip, mask, "")
+			c.dns1, c.dns2 = bondReadDNS()
+		}
+		fmt.Println()
+		v6, v6addr, v6gw, ok := bondReadIPv6()
 		if !ok {
 			return
 		}
-		c.ip, c.netmask = ip, mask
-		c.gateway = bondReadGateway(ip, mask, "")
-		c.dns1, c.dns2 = bondReadDNS()
+		c.ipv6, c.v6addr, c.v6gw = v6, v6addr, v6gw
 	}
-	fmt.Println()
-	v6, v6addr, v6gw, ok := bondReadIPv6()
-	if !ok {
-		return
-	}
-	c.ipv6, c.v6addr, c.v6gw = v6, v6addr, v6gw
 	fmt.Println()
 	fmt.Printf("Bond %s: %s\n", c.name, strings.Join(c.slaves, " + "))
 	fmt.Printf("Mode: %s  MAC: %s  IPv4: %s  IPv6: %s\n", c.mode, func() string {
