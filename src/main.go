@@ -1069,6 +1069,9 @@ func debianWriteStatic(nic, ip, netmask, gateway, dns1, dns2 string) error {
 			block += extra + "\n"
 		}
 	}
+	if v6 := debianIPv6Block(interfacesF, nic); v6 != "" {
+		block += "\n" + v6 + "\n"
+	}
 	return debianRewriteBlock(nic, block)
 }
 
@@ -1080,6 +1083,9 @@ func debianWriteDHCP(nic string) error {
 		for _, extra := range debianStanzaExtras(string(old), nic) {
 			block += extra + "\n"
 		}
+	}
+	if v6 := debianIPv6Block(interfacesF, nic); v6 != "" {
+		block += "\n" + v6 + "\n"
 	}
 	return debianRewriteBlock(nic, block)
 }
@@ -1422,6 +1428,47 @@ func isValidIPv4(s string) bool {
 	return ip != nil && ip.To4() != nil
 }
 
+func rhelWriteBondIP(nic string, dhcp bool, ip, mask, gw, d1, d2 string) error {
+	path := filepath.Join(ifcfgDir, "ifcfg-"+nic)
+	data, _ := os.ReadFile(path)
+	managed := map[string]bool{
+		"BOOTPROTO": true, "IPADDR": true, "PREFIX": true, "NETMASK": true,
+		"GATEWAY": true, "DNS1": true, "DNS2": true, "PEERDNS": true,
+	}
+	var out []string
+	for _, line := range strings.Split(string(data), "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" || strings.HasPrefix(t, "#") {
+			out = append(out, line)
+			continue
+		}
+		k := t
+		if i := strings.Index(k, "="); i >= 0 {
+			k = strings.TrimSpace(k[:i])
+		}
+		if managed[k] {
+			continue
+		}
+		out = append(out, line)
+	}
+	if dhcp {
+		out = append(out, "BOOTPROTO=dhcp", "PEERDNS=yes")
+	} else {
+		out = append(out, "BOOTPROTO=none", "IPADDR="+ip, "NETMASK="+mask)
+		if gw != "" {
+			out = append(out, "GATEWAY="+gw)
+		}
+		out = append(out, "PEERDNS=no")
+		if d1 != "" {
+			out = append(out, "DNS1="+d1)
+		}
+		if d2 != "" {
+			out = append(out, "DNS2="+d2)
+		}
+	}
+	return writeFileAtomic(path, strings.Join(out, "\n")+"\n", 0644)
+}
+
 func staticConfig() {
 	fmt.Println("===================== NETWORK CONFIG (static) =====================")
 	nics := listNics()
@@ -1452,9 +1499,14 @@ func staticConfig() {
 		fmt.Printf("ERROR: %s does not exist - this tool only edits an existing ifcfg.\n", cfg)
 		return
 	}
-	if reason := specialNICReason(nic); reason != "" {
+	bondMaster := bondIsMaster(nic)
+	if reason := specialNICReason(nic); reason != "" && !bondMaster {
 		fmt.Printf("ERROR: %s is a %s - refusing to touch it.\n", nic, reason)
 		fmt.Println("       Nothing was changed.")
+		return
+	}
+	if bondMaster && netBackend == "netplan" {
+		fmt.Printf("ERROR: %s is a bond master under netplan; edit it with the bond menu.\n", nic)
 		return
 	}
 	// IP/CIDR input
@@ -1607,6 +1659,13 @@ func staticConfig() {
 		}
 	}
 	existingDNS = dedupeStrings(existingDNS)
+	d1, d2 := "", ""
+	if len(existingDNS) > 0 {
+		d1 = existingDNS[0]
+		if len(existingDNS) > 1 {
+			d2 = existingDNS[1]
+		}
+	}
 	var dnsBlock string
 	if len(existingDNS) > 0 {
 		dnsBlock = "PEERDNS=no"
@@ -1636,6 +1695,13 @@ func staticConfig() {
 	// write config per backend
 	switch netBackend {
 	case "rhel":
+		if bondMaster {
+			if err := rhelWriteBondIP(nic, false, ipAddr, netmask, gateway, d1, d2); err != nil {
+				fmt.Printf("ERROR: cannot write %s: %v - nothing was changed.\n", cfg, err)
+				return
+			}
+			break
+		}
 		gwBlock := ""
 		if gateway != "" {
 			gwBlock = "GATEWAY=" + gateway + "\n"
@@ -1651,13 +1717,6 @@ func staticConfig() {
 			return
 		}
 	case "debian":
-		d1, d2 := "", ""
-		if len(existingDNS) > 0 {
-			d1 = existingDNS[0]
-			if len(existingDNS) > 1 {
-				d2 = existingDNS[1]
-			}
-		}
 		if err := debianWriteStatic(nic, ipAddr, netmask, gateway, d1, d2); err != nil {
 			fmt.Printf("ERROR: cannot write %s: %v\n", interfacesF, err)
 			return
@@ -1798,9 +1857,15 @@ func dhcpConfig() {
 		return
 	}
 	nic := nics[n-1]
-	if reason := specialNICReason(nic); reason != "" {
+	bondMaster := bondIsMaster(nic)
+	if reason := specialNICReason(nic); reason != "" && !bondMaster {
 		fmt.Printf("ERROR: %s is a %s - refusing to touch it.\n", nic, reason)
 		fmt.Println("       Nothing was changed.")
+		pause()
+		return
+	}
+	if bondMaster && netBackend == "netplan" {
+		fmt.Printf("ERROR: %s is a bond master under netplan; edit it with the bond menu.\n", nic)
 		pause()
 		return
 	}
@@ -1814,6 +1879,14 @@ func dhcpConfig() {
 			os.MkdirAll(bakDir, 0700)
 			bak = filepath.Join(bakDir, fmt.Sprintf("ifcfg-%s.%s", nic, time.Now().Format("20060102_150405")))
 			os.WriteFile(bak, b, 0600)
+		}
+		if bondMaster {
+			if err := rhelWriteBondIP(nic, true, "", "", "", "", ""); err != nil {
+				fmt.Printf("ERROR: cannot write %s: %v - nothing was changed.\n", cfg, err)
+				pause()
+				return
+			}
+			break
 		}
 		base := fmt.Sprintf("TYPE=Ethernet\nBOOTPROTO=dhcp\nDEFROUTE=yes\nIPV4_FAILURE_FATAL=no\nNM_CONTROLLED=yes\nNAME=%s\nDEVICE=%s\nONBOOT=yes\n", nic, nic)
 		if err := writeFileAtomic(cfg, mergeIfcfg(old, base, true), 0644); err != nil {
