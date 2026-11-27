@@ -833,7 +833,13 @@ func bondApply(c bondSettings) bool {
 		netplanApply()
 	}
 	bondSetMAC(c.name, c.mac)
-	for i := 0; i < 20; i++ {
+	wait := 20 * time.Second
+	if c.mode == "802.3ad" {
+		wait = 45 * time.Second
+	}
+	fmt.Printf("Waiting for bond link/MII/active slave (up to %ds) ...\n", int(wait.Seconds()))
+	deadline := time.Now().Add(wait)
+	for time.Now().Before(deadline) {
 		if bondReady(c) {
 			return true
 		}
@@ -842,15 +848,48 @@ func bondApply(c bondSettings) bool {
 	return false
 }
 
+func bondLinkReady(name string) bool {
+	data, err := os.ReadFile("/proc/net/bonding/" + name)
+	if err != nil {
+		return false
+	}
+	bondUp := false
+	active := false
+	slaveUp := false
+	inSlave := false
+	for _, line := range strings.Split(string(data), "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "MII Status:") && !inSlave {
+			bondUp = strings.Contains(t, "up")
+			continue
+		}
+		if strings.HasPrefix(t, "Currently Active Slave:") {
+			active = !strings.Contains(t, "None")
+			continue
+		}
+		if strings.HasPrefix(t, "Slave Interface:") {
+			inSlave = true
+			continue
+		}
+		if inSlave && strings.HasPrefix(t, "MII Status:") && strings.Contains(t, "up") {
+			slaveUp = true
+		}
+	}
+	return bondUp && active && slaveUp
+}
+
 func bondReady(c bondSettings) bool {
 	if !bondIfaceExists(c.name) {
 		return false
 	}
-	if _, err := os.Stat("/proc/net/bonding/" + c.name); err != nil {
+	if !bondLinkReady(c.name) {
 		return false
 	}
 	out, _ := run("ip", "-4", "-o", "addr", "show", c.name)
-	return strings.Contains(out, "inet ")
+	if !strings.Contains(out, "inet ") {
+		return false
+	}
+	return true
 }
 
 func bondBackup(c bondSettings) string {
@@ -1326,7 +1365,11 @@ func bondConfig() {
 	}
 	fmt.Println("Applying bond configuration ...")
 	if !bondApply(c) {
-		fmt.Println("FAILED: bond did not come up - restoring previous configuration.")
+		if c.mode == "802.3ad" {
+			fmt.Println("FAILED: LACP bond has no active slave; check the switch LACP/port-channel.")
+		} else {
+			fmt.Println("FAILED: bond link/MII/active slave is not ready - restoring previous configuration.")
+		}
 		bondRestore(bak, c)
 		pause()
 		return

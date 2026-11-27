@@ -45,6 +45,8 @@
 - CentOS 7 写入 `/etc/sysconfig/network-scripts/ifcfg-*`，NetworkManager 与 network-scripts 两种模式都兼容
 - Debian 12 写入 `/etc/network/interfaces`，使用 `bond-master`/`bond-slaves`/`bond-mode`；自动识别 `ifenslave` 的 ifupdown hook
 - 写入前备份到 `/var/backups/netcfg/bond.<时间>`；应用失败自动恢复旧配置
+- 应用后会等待 bond 的 `MII Status: up`、活动 slave 和 IPv4 地址全部就绪才报成功；`active-backup` 最多等 20 秒，`802.3ad` 最多等 45 秒
+- `802.3ad` 等不到活动 slave 时会明确提示检查交换机 LACP/port-channel
 - 应用后会显示 bond 状态、当前活动 slave、IP 和 MAC
 
 ### 手动槽位映射
