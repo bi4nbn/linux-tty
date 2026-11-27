@@ -1297,11 +1297,6 @@ func bondConfig() {
 		return c.v6addr
 	}())
 
-	if !bondConfirm("Apply bond now? SSH may drop if it uses a selected NIC") {
-		fmt.Println("Cancelled.")
-		pause()
-		return
-	}
 	if netBackend == "debian" && !ensureIfenslave() {
 		pause()
 		return
